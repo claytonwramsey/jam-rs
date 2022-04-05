@@ -35,14 +35,15 @@ pub type ParseResult = Result<Ast, ParseError>;
 /// stream.
 pub fn parse<I: Iterator<Item = char>>(tokens: TokenStream<I>) -> ParseResult {
     let mut peeker = tokens.peekable();
-    let result = parse_exp(&mut peeker);
+    let result = parse_exp(&mut peeker)?;
+    println!("{result}");
     let n = peeker.next();
     if n != None {
         println!("spare tokens: {n:?}");
         return Err(ParseError::SpareTokens);
     }
 
-    result
+    Ok(result)
 }
 
 /// Parse an expression. Consumes all tokens associated with the expression.
@@ -50,46 +51,42 @@ fn parse_exp<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
     let token = tokens.next().ok_or(ParseError::ReachedEnd)??;
     match token {
         Token::KeyWord(kw) => match kw {
-            KeyWord::If => parse_if(tokens),
-            KeyWord::Let => parse_let(tokens),
-            KeyWord::Map => parse_map(tokens),
-            _ => Err(ParseError::UnexpectedToken {
-                got: token,
-                expected: "`if`, `let`, `map`, or phrase".into(),
-            }),
+            KeyWord::If => return parse_if(tokens),
+            KeyWord::Let => return parse_let(tokens),
+            KeyWord::Map => return parse_map(tokens),
+            _ => (),
         },
-        _ => {
-            // a phrase beginning with a term, potentially followed by binary
-            // operations.
-            let mut exp = parse_term(tokens, token)?;
-            loop {
-                // find any binary operations
-                let operator = match tokens.peek() {
-                    Some(Ok(Token::Plus)) => BinOp::Plus,
-                    Some(Ok(Token::Minus)) => BinOp::Minus,
-                    Some(Ok(Token::Slash)) => BinOp::Div,
-                    Some(Ok(Token::Star)) => BinOp::Mul,
-                    Some(Ok(Token::And)) => BinOp::And,
-                    Some(Ok(Token::Or)) => BinOp::Or,
-                    Some(Ok(Token::Eq)) => BinOp::Eq,
-                    Some(Ok(Token::Neq)) => BinOp::Neq,
-                    Some(Ok(Token::Gt)) => BinOp::Gt,
-                    Some(Ok(Token::Geq)) => BinOp::Geq,
-                    Some(Ok(Token::Lt)) => BinOp::Lt,
-                    Some(Ok(Token::Leq)) => BinOp::Leq,
-                    _ => break,
-                };
-                tokens.next(); // consume the peeked token
-                let last_token = tokens.next().ok_or(ParseError::ReachedEnd)??;
-                exp = Ast::BinOp {
-                    rator: operator,
-                    lhs: Rc::new(exp),
-                    rhs: Rc::new(parse_term(tokens, last_token)?),
-                };
-            }
-            Ok(exp)
-        }
+        _ => (),
+    };
+    // a phrase beginning with a term, potentially followed by binary
+    // operations.
+    let mut exp = parse_term(tokens, token)?;
+    loop {
+        // find any binary operations
+        let operator = match tokens.peek() {
+            Some(Ok(Token::Plus)) => BinOp::Plus,
+            Some(Ok(Token::Minus)) => BinOp::Minus,
+            Some(Ok(Token::Slash)) => BinOp::Div,
+            Some(Ok(Token::Star)) => BinOp::Mul,
+            Some(Ok(Token::And)) => BinOp::And,
+            Some(Ok(Token::Or)) => BinOp::Or,
+            Some(Ok(Token::Eq)) => BinOp::Eq,
+            Some(Ok(Token::Neq)) => BinOp::Neq,
+            Some(Ok(Token::Gt)) => BinOp::Gt,
+            Some(Ok(Token::Geq)) => BinOp::Geq,
+            Some(Ok(Token::Lt)) => BinOp::Lt,
+            Some(Ok(Token::Leq)) => BinOp::Leq,
+            _ => break,
+        };
+        tokens.next(); // consume the peeked token
+        let last_token = tokens.next().ok_or(ParseError::ReachedEnd)??;
+        exp = Ast::BinOp {
+            rator: operator,
+            lhs: Rc::new(exp),
+            rhs: Rc::new(parse_term(tokens, last_token)?),
+        };
     }
+    Ok(exp)
 }
 
 /// Parse an if statement. Assumes the `if` keyword has already been consumed.
@@ -264,6 +261,8 @@ fn parse_args<I: Iterator<Item = char>>(
     }
 }
 
+/// Require that `token` be an identifier, and return the string it identifies, 
+/// or a `ParseError` if not.
 fn require_id(token: Option<TokenResult>) -> Result<String, ParseError> {
     match token.ok_or(ParseError::ReachedEnd)?? {
         Token::Id(s) => Ok(s),
@@ -274,6 +273,8 @@ fn require_id(token: Option<TokenResult>) -> Result<String, ParseError> {
     }
 }
 
+/// Require that the token be equal to the expected token. Returns an `Err` if 
+/// this is not the case.
 fn require_token(token: Option<TokenResult>, required: Token) -> Result<(), ParseError> {
     let t = token.ok_or(ParseError::ReachedEnd)??;
     if required == t {
@@ -335,7 +336,7 @@ mod tests {
                 rator: Rc::new(Ast::Primitive(PrimFun::First)),
                 params: vec![Ast::App {
                     rator: Rc::new(Ast::Primitive(PrimFun::Cons)),
-                    params: vec![Ast::Empty],
+                    params: vec![Ast::Int(1), Ast::Empty],
                 }],
             }),
         );
