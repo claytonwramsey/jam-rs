@@ -110,7 +110,7 @@ pub fn evaluate_help<E: Environment>(
             for (key, def_body) in defs.iter() {
                 new_env.store(environment, key, def_body)?;
             }
-            evaluate_help(body, environment)?
+            evaluate_help(body, &mut new_env)?
         },
         Ast::Map { params, body } => Value::Closure { 
             params: params.clone(), 
@@ -287,7 +287,7 @@ fn require_binop_bool<E: Environment>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{binding::ValueEnvironment, token::TokenStream, parse::parse};
+    use crate::{binding::{CallByValue, CallByName, CallByNeed}, token::TokenStream, parse::parse};
 
     use super::*;
 
@@ -303,6 +303,42 @@ mod tests {
 
     #[test]
     fn test_evalute_int_constant() {
-        test_eval_helper::<ValueEnvironment>("123", Ok(Value::Int(123)));
+        test_eval_helper::<CallByValue>("123", Ok(Value::Int(123)));
+        test_eval_helper::<CallByName>("123", Ok(Value::Int(123)));
+        test_eval_helper::<CallByNeed>("123", Ok(Value::Int(123)));
+    }
+
+    #[test]
+    fn test_evaluate_let() {
+        let s = "let a := 2; in a + a";
+        test_eval_helper::<CallByValue>(s, Ok(Value::Int(4)));
+        test_eval_helper::<CallByName>(s, Ok(Value::Int(4)));
+        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(4)));
+    }
+
+    #[test]
+    fn test_def_map_in_let() {
+        let s = "let inc := map x to x + 1; in inc(4)";
+        test_eval_helper::<CallByValue>(s, Ok(Value::Int(5)));
+        test_eval_helper::<CallByName>(s, Ok(Value::Int(5)));
+        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(5)));
+    }
+
+    #[test]
+    fn test_branching() {
+        let s = r#"
+            let f := map x to 
+                if list?(x) then 
+                    if cons?(x) then 
+                        first(x)
+                    else 
+                        empty 
+                else x; 
+            in 
+                f(f(f(cons(cons(1, empty), empty))))
+            "#;
+        test_eval_helper::<CallByValue>(s, Ok(Value::Int(1)));
+        test_eval_helper::<CallByName>(s, Ok(Value::Int(1)));
+        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(1)));
     }
 }

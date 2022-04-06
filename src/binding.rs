@@ -20,14 +20,16 @@ pub trait Environment: Clone + Eq + Default + Debug {
     fn get(&mut self, key: &String) -> EvalResult<Self>;
 }
 
+/* Call-by-value */
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// An environment for call-by-value.
-pub struct ValueEnvironment {
+pub struct CallByValue {
     /// The stored key-value pairs.
     storage: HashMap<String, Value<Self>>,
 }
 
-impl Environment for ValueEnvironment {
+impl Environment for CallByValue {
     /// Store a value. Will eagerly evaluate the body to get the resulting 
     /// value.
     fn store(
@@ -38,7 +40,7 @@ impl Environment for ValueEnvironment {
     ) -> Result<(), EvalError<Self>> {
         self.storage.insert(
             key.clone(),
-            evaluate_help::<ValueEnvironment>(&body, context)?,
+            evaluate_help::<CallByValue>(&body, context)?,
         );
 
         Ok(())
@@ -55,10 +57,98 @@ impl Environment for ValueEnvironment {
     }
 }
 
-impl Default for ValueEnvironment {
-    fn default() -> ValueEnvironment {
-        ValueEnvironment { 
+impl Default for CallByValue {
+    fn default() -> CallByValue {
+        CallByValue { 
             storage: HashMap::new(),
+        }
+    }
+}
+
+/* Call-by-name */
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// A call-by-name environment.
+pub struct CallByName {
+    /// map from variables to the ASTs they represent
+    storage: HashMap<String, (CallByName, Ast)>,
+}
+
+impl Environment for CallByName {
+    fn store(
+        &mut self, 
+        context: &mut Self, 
+        key: &String, 
+        body: &Ast,
+    ) -> Result<(), EvalError<Self>> {
+        self.storage.insert(key.clone(), (context.clone(), body.clone()));
+
+        Ok(())
+    }
+
+    fn get(&mut self, key: &String) -> EvalResult<Self> {
+        let (env, body) = self.storage
+            .get_mut(key)
+            .ok_or(EvalError::Unbound(key.clone()))?;
+        evaluate_help(body, env)
+    }
+}
+
+impl Default for CallByName {
+    fn default() -> CallByName {
+        CallByName { storage: HashMap::new() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// The internal values of bindings in a call-by-need environment.
+enum NeedValue {
+    /// The value has not yet been evaluated.
+    Ast(CallByNeed, Ast),
+    /// The value has been evaluated.
+    Value(Value<CallByNeed>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallByNeed {
+    storage: HashMap<String, NeedValue>
+}
+
+impl Environment for CallByNeed {
+    fn store(
+        &mut self, 
+        context: &mut Self, 
+        key: &String, 
+        body: &Ast,
+    ) -> Result<(), EvalError<Self>> {
+        self.storage.insert(key.clone(), NeedValue::Ast(
+            context.clone(), 
+            body.clone(),
+        ));
+
+        Ok(())
+    }
+
+    fn get(&mut self, key: &String) -> EvalResult<Self> {
+        match self.storage.get_mut(key) {
+            Some(NeedValue::Ast(env, ast)) => {
+                let value = evaluate_help(&ast, env)?;
+                self.storage.insert(
+                    key.clone(), 
+                    NeedValue::Value(value.clone())
+                );
+                Ok(value)
+            }
+            Some(NeedValue::Value(v)) => Ok(v.clone()),
+            None => Err(EvalError::Unbound(key.clone())),
+        }
+    }
+}
+
+impl Default for CallByNeed {
+    fn default() -> Self {
+        Self { 
+            storage: HashMap::new() 
         }
     }
 }
