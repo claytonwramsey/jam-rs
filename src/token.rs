@@ -64,6 +64,7 @@ pub struct TokenStream<I: Iterator<Item = char>> {
 }
 
 impl<I: Iterator<Item = char>> TokenStream<I> {
+    #[allow(unused)]
     pub fn new(iter: I) -> TokenStream<I> {
         TokenStream {
             source: iter.peekable(),

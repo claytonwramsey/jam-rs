@@ -36,10 +36,8 @@ pub type ParseResult = Result<Ast, ParseError>;
 pub fn parse<I: Iterator<Item = char>>(tokens: TokenStream<I>) -> ParseResult {
     let mut peeker = tokens.peekable();
     let result = parse_exp(&mut peeker)?;
-    println!("{result}");
     let n = peeker.next();
     if n != None {
-        println!("spare tokens: {n:?}");
         return Err(ParseError::SpareTokens);
     }
 
@@ -340,6 +338,21 @@ mod tests {
                 }],
             }),
         );
+    }
+
+    #[test]
+    fn test_parse_let() {
+        parse_helper(
+            "let a := 3; in a + a",
+            Ok(Ast::Let { 
+                defs: vec![("a".into(), Ast::Int(3))], 
+                body: Rc::new(Ast::BinOp { 
+                    rator: BinOp::Plus, 
+                    lhs: Rc::new(Ast::Variable("a".into())), 
+                    rhs: Rc::new(Ast::Variable("a".into())) 
+                })
+            })
+        )
     }
 
     fn parse_helper(input: &str, expected: ParseResult) {
