@@ -17,4 +17,8 @@ It's unclear that I'll get any of this done, but these are some possible areas f
 
 ## Contributing
 
-Feel free to open a pull request. This code is licensed under the GNU GPLv3. For more details, review the license file, also in the root directory of this repository.
+Feel free to open a pull request. 
+
+## License
+
+This code is licensed under either the [MIT license](https://mit-license.org/) or the [Apache 2.0 license](https://apache.org/licenses/LICENSE-2.0), your choice.
