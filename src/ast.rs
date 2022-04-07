@@ -139,6 +139,8 @@ pub enum PrimFun {
 }
 
 impl Display for Ast {
+    /// Print out the program. The displayed version of this program should be
+    /// able to be parsed and yield an identical AST.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Ast::Int(n) => write!(f, "{n}"),
@@ -234,6 +236,8 @@ impl Display for PrimFun {
     }
 }
 
+/// Helper function for writing out a list of statements, separated by a 
+/// string. 
 fn write_list<T: Display>(
     list: &[T],
     sep: &str,

@@ -1,3 +1,5 @@
+//! A module containing tools for parsing the Jam language.
+
 use std::{iter::Peekable, rc::Rc};
 
 use crate::{

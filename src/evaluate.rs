@@ -31,14 +31,14 @@ pub enum EvalError {
 pub type EvalResult = Result<Value, EvalError>;
 
 #[allow(unused)]
-/// Evaluate a Jam expression. Returns the resulting value on success, and an 
-/// `Err` if the expression is incorrect in some way (typically due to type 
+/// Evaluate a Jam expression. Returns the resulting value on success, and an
+/// `Err` if the expression is incorrect in some way (typically due to type
 /// errors).
 pub fn evaluate<E: 'static + BuildEnvironment>(ast: &Ast) -> EvalResult {
     evaluate_help(ast, Rc::new(E::default()))
 }
 
-/// A helper function to evaluate a Jam expresion given a pre-existing 
+/// A helper function to evaluate a Jam expresion given a pre-existing
 /// environment.
 pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult {
     Ok(match ast {
@@ -104,10 +104,7 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
         } => {
             let test_val = evaluate_help(condition, environment.clone())?;
             match test_val {
-                Value::Bool(true) => evaluate_help(
-                    consequence, 
-                    environment.clone()
-                )?,
+                Value::Bool(true) => evaluate_help(consequence, environment.clone())?,
                 Value::Bool(false) => evaluate_help(alternate, environment)?,
                 _ => return Err(EvalError::TestNonBool(test_val)),
             }
@@ -127,7 +124,7 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
     })
 }
 
-/// Evaluate a primitive function call. `args` is the values of all the 
+/// Evaluate a primitive function call. `args` is the values of all the
 /// arguments to the function.
 fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
     let require_param_len = |n| match args.len() == n {

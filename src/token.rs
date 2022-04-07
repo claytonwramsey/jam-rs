@@ -1,3 +1,6 @@
+//! A module containing tools for tokenizing a Jam program into a 
+//! parser-friendly LL(1) format.
+
 use std::{fmt::Display, iter::Peekable};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -9,23 +12,41 @@ pub enum Token {
     /// A numeric literal. Will always be positive (as negatives are expressed
     /// as operators)
     Number(u32),
+    /// A reserved keyword.
     KeyWord(KeyWord),
+    /// `(`.
     LeftParenthesis,
+    /// `)`.
     RightParenthesis,
+    /// `,`.
     Comma,
+    /// `;`.
     Semicolon,
+    /// `+`.
     Plus,
+    /// `-`.
     Minus,
+    /// `~`.
     Tilde,
+    /// `*`.
     Star,
+    /// `/`.
     Slash,
+    /// `=`.
     Eq,
+    /// `!=`.
     Neq,
+    /// `<`.
     Lt,
+    /// `>`.
     Gt,
+    /// `<=`.
     Leq,
+    /// `>=`.
     Geq,
+    /// `&`.
     And,
+    /// `|`.
     Or,
     /// The walrus `:=` operator, used in lets.
     Walrus,
@@ -58,6 +79,7 @@ pub enum LexError {
 /// The result of asking for another token from the lexer.
 pub type TokenResult = Result<Token, LexError>;
 
+/// A stream of tokens.
 pub struct TokenStream<I: Iterator<Item = char>> {
     /// The source of the tokens.
     source: Peekable<I>,
@@ -65,6 +87,8 @@ pub struct TokenStream<I: Iterator<Item = char>> {
 
 impl<I: Iterator<Item = char>> TokenStream<I> {
     #[allow(unused)]
+    /// Construct a new `TokenStream` for any source which can iterate over 
+    /// characters.
     pub fn new(iter: I) -> TokenStream<I> {
         TokenStream {
             source: iter.peekable(),
@@ -75,6 +99,9 @@ impl<I: Iterator<Item = char>> TokenStream<I> {
 impl<I: Iterator<Item = char>> Iterator for TokenStream<I> {
     type Item = TokenResult;
 
+    /// Get the next token. Will return a `LexError` if it is unable to parse 
+    /// out a token, either due to the source of characters running out or 
+    /// providing an unexpected character.
     fn next(&mut self) -> Option<Self::Item> {
         Some(Ok(match self.source.next()? {
             '(' => Token::LeftParenthesis,

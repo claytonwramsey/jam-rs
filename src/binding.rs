@@ -1,3 +1,7 @@
+//! A module for environments and binding rules. Contains implementations for 
+//! call-by-need, call-by-name, and call-by-value, as well as the traits 
+//! required to implement a custom binding scheme.
+
 use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc};
 
 use crate::{
@@ -19,7 +23,7 @@ pub trait Environment: Debug {
     /// Create a new environment with the same properties as the original one.
     fn duplicate(&self) -> Box<dyn Environment>;
 
-    /// Store a key in the environment. The context is the environment that the 
+    /// Store a key in the environment. The context is the environment that the
     /// key was created in.
     fn store(
         &mut self,
@@ -221,15 +225,13 @@ impl Environment for CallByNeed {
             Some(cell) => {
                 let value;
                 match &*cell.borrow() {
-                    NeedValue::Ast(env, ast) => value = evaluate_help(
-                        &ast, 
-                        env.clone())?,
+                    NeedValue::Ast(env, ast) => value = evaluate_help(&ast, env.clone())?,
                     NeedValue::Value(val) => return Ok(val.clone()),
                 };
                 cell.replace(NeedValue::Value(value.clone()));
 
                 Ok(value)
-            },
+            }
             None => Err(EvalError::Unbound(key.clone())),
         }
     }
