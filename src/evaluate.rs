@@ -7,6 +7,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// The types of errors which can occur during a Jam interpretation.
 pub enum EvalError {
     /// A variable was unbound and occurred free.
     Unbound(String),
@@ -30,10 +31,15 @@ pub enum EvalError {
 pub type EvalResult = Result<Value, EvalError>;
 
 #[allow(unused)]
+/// Evaluate a Jam expression. Returns the resulting value on success, and an 
+/// `Err` if the expression is incorrect in some way (typically due to type 
+/// errors).
 pub fn evaluate<E: 'static + BuildEnvironment>(ast: &Ast) -> EvalResult {
     evaluate_help(ast, Rc::new(E::default()))
 }
 
+/// A helper function to evaluate a Jam expresion given a pre-existing 
+/// environment.
 pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult {
     Ok(match ast {
         Ast::Int(n) => Value::Int(*n as i32),
@@ -121,6 +127,8 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
     })
 }
 
+/// Evaluate a primitive function call. `args` is the values of all the 
+/// arguments to the function.
 fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
     let require_param_len = |n| match args.len() == n {
         true => Ok(()),
@@ -333,5 +341,27 @@ mod tests {
         test_eval_helper::<CallByValue>(s, Ok(Value::Int(1)));
         test_eval_helper::<CallByName>(s, Ok(Value::Int(1)));
         test_eval_helper::<CallByNeed>(s, Ok(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_y() {
+        let s = r#"
+            let 
+                Y := map f to 
+                    let 
+                        g := map x to f(x(x));
+                    in 
+                        g(g);
+                fact := map f to 
+                    map n to 
+                        if n = 0 then
+                            1
+                        else
+                            n * f(n - 1);
+            in 
+                (Y(fact))(6)
+        "#;
+        test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
+        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
     }
 }
