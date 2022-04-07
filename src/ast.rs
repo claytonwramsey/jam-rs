@@ -153,7 +153,7 @@ impl Display for Ast {
                     Ast::Primitive(p) => write!(f, "{p}("),
                     _ => write!(f, "({rator})("),
                 }?;
-                write_list(&params, &", ", f)?;
+                write_list(params, ", ", f)?;
                 write!(f, ")")
             }
             Ast::BinOp { rator, lhs, rhs } => write!(f, "{lhs} {rator} {rhs}"),
@@ -172,7 +172,7 @@ impl Display for Ast {
             }
             Ast::Map { params, body } => {
                 write!(f, "map ")?;
-                write_list(&params, ", ", f)?;
+                write_list(params, ", ", f)?;
                 write!(f, " to {}", body)
             }
             Ast::Primitive(_) => todo!(),

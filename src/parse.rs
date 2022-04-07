@@ -49,15 +49,14 @@ pub fn parse<I: Iterator<Item = char>>(tokens: TokenStream<I>) -> ParseResult {
 /// Parse an expression. Consumes all tokens associated with the expression.
 fn parse_exp<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResult {
     let token = tokens.next().ok_or(ParseError::ReachedEnd)??;
-    match token {
-        Token::KeyWord(kw) => match kw {
+    if let Token::KeyWord(kw) = token {
+        match kw {
             KeyWord::If => return parse_if(tokens),
             KeyWord::Let => return parse_let(tokens),
             KeyWord::Map => return parse_map(tokens),
             _ => (),
-        },
-        _ => (),
-    };
+        }
+    }
     // a phrase beginning with a term, potentially followed by binary
     // operations.
     let mut exp = parse_term(tokens, token)?;

@@ -28,14 +28,14 @@ pub trait Environment: Debug {
     fn store(
         &mut self,
         context: Rc<dyn Environment>,
-        key: &String,
+        key: &str,
         body: &Ast,
     ) -> Result<(), EvalError>;
 
     /// Get the key from an environment. Returns an unbound error if it is
     /// unable to get the key. Although the pointer to `self` is mutable, the
     /// environment may not remove any bindings - this is for call-by-need.
-    fn get(&self, key: &String) -> EvalResult;
+    fn get(&self, key: &str) -> EvalResult;
 }
 
 impl PartialEq for dyn Environment {
@@ -66,7 +66,7 @@ impl Eq for dyn Environment {}
 
 /* Call-by-value */
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 /// An environment for call-by-value.
 pub struct CallByValue {
     /// The stored key-value pairs.
@@ -82,7 +82,7 @@ impl Environment for CallByValue {
         Box::new(
             self.storage
                 .keys()
-                .map(|s| s.clone())
+                .cloned()
                 .collect::<Vec<String>>()
                 .into_iter(),
         )
@@ -93,30 +93,20 @@ impl Environment for CallByValue {
     fn store(
         &mut self,
         context: Rc<dyn Environment>,
-        key: &String,
+        key: &str,
         body: &Ast,
     ) -> Result<(), EvalError> {
-        self.storage
-            .insert(key.clone(), evaluate_help(&body, context)?);
-
+        self.storage.insert(key.into(), evaluate_help(body, context)?);
         Ok(())
     }
 
     /// Get a key
-    fn get(&self, key: &String) -> EvalResult {
+    fn get(&self, key: &str) -> EvalResult {
         Ok(self
             .storage
             .get(key)
-            .ok_or(EvalError::Unbound(key.clone()))?
+            .ok_or_else(|| EvalError::Unbound(key.into()))?
             .clone())
-    }
-}
-
-impl Default for CallByValue {
-    fn default() -> CallByValue {
-        CallByValue {
-            storage: HashMap::new(),
-        }
     }
 }
 
@@ -124,7 +114,7 @@ impl BuildEnvironment for CallByValue {}
 
 /* Call-by-name */
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 /// A call-by-name environment.
 pub struct CallByName {
     /// map from variables to the ASTs they represent
@@ -135,20 +125,20 @@ impl Environment for CallByName {
     fn store(
         &mut self,
         context: Rc<dyn Environment>,
-        key: &String,
+        key: &str,
         body: &Ast,
     ) -> Result<(), EvalError> {
         self.storage
-            .insert(key.clone(), (context.clone(), body.clone()));
+            .insert(key.into(), (context.clone(), body.clone()));
 
         Ok(())
     }
 
-    fn get(&self, key: &String) -> EvalResult {
+    fn get(&self, key: &str) -> EvalResult {
         let (env, body) = self
             .storage
             .get(key)
-            .ok_or(EvalError::Unbound(key.clone()))?;
+            .ok_or_else(|| EvalError::Unbound(key.into()))?;
         evaluate_help(body, env.clone())
     }
 
@@ -156,7 +146,7 @@ impl Environment for CallByName {
         Box::new(
             self.storage
                 .keys()
-                .map(|s| s.clone())
+                .cloned()
                 .collect::<Vec<String>>()
                 .into_iter(),
         )
@@ -164,14 +154,6 @@ impl Environment for CallByName {
 
     fn duplicate(&self) -> Box<dyn Environment> {
         Box::new(self.clone())
-    }
-}
-
-impl Default for CallByName {
-    fn default() -> CallByName {
-        CallByName {
-            storage: HashMap::new(),
-        }
     }
 }
 
@@ -200,7 +182,7 @@ impl PartialEq for NeedValue {
 
 impl Eq for NeedValue {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CallByNeed {
     storage: HashMap<String, RefCell<NeedValue>>,
 }
@@ -209,30 +191,29 @@ impl Environment for CallByNeed {
     fn store(
         &mut self,
         context: Rc<dyn Environment>,
-        key: &String,
+        key: &str,
         body: &Ast,
     ) -> Result<(), EvalError> {
         self.storage.insert(
-            key.clone(),
+            key.into(),
             RefCell::new(NeedValue::Ast(context.clone(), body.clone())),
         );
 
         Ok(())
     }
 
-    fn get(&self, key: &String) -> EvalResult {
+    fn get(&self, key: &str) -> EvalResult {
         match self.storage.get(key) {
             Some(cell) => {
-                let value;
-                match &*cell.borrow() {
-                    NeedValue::Ast(env, ast) => value = evaluate_help(&ast, env.clone())?,
+                let value = match &*cell.borrow() {
+                    NeedValue::Ast(env, ast) => evaluate_help(ast, env.clone())?,
                     NeedValue::Value(val) => return Ok(val.clone()),
                 };
                 cell.replace(NeedValue::Value(value.clone()));
 
                 Ok(value)
             }
-            None => Err(EvalError::Unbound(key.clone())),
+            None => Err(EvalError::Unbound(key.into())),
         }
     }
 
@@ -240,7 +221,7 @@ impl Environment for CallByNeed {
         Box::new(
             self.storage
                 .keys()
-                .map(|s| s.clone())
+                .cloned()
                 .collect::<Vec<String>>()
                 .into_iter(),
         )
@@ -248,14 +229,6 @@ impl Environment for CallByNeed {
 
     fn duplicate(&self) -> Box<dyn Environment> {
         Box::new(self.clone())
-    }
-}
-
-impl Default for CallByNeed {
-    fn default() -> Self {
-        Self {
-            storage: HashMap::new(),
-        }
     }
 }
 

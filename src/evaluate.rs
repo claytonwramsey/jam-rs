@@ -80,12 +80,12 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
             }
         }
         Ast::BinOp { rator, lhs, rhs } => {
-            let lval = evaluate_help(&lhs, environment.clone())?;
-            let rval = evaluate_help(&rhs, environment)?;
+            let lval = evaluate_help(lhs, environment.clone())?;
+            let rval = evaluate_help(rhs, environment)?;
             eval_binop(*rator, lval, rval)?
         }
         Ast::UnOp { rator, operand } => {
-            let arg = evaluate_help(&operand, environment)?;
+            let arg = evaluate_help(operand, environment)?;
             match rator {
                 UnOp::Not => match arg {
                     Value::Bool(b) => Value::Bool(!b),
@@ -118,7 +118,7 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
         }
         Ast::Map { params, body } => Value::Closure {
             params: params.clone(),
-            environment: environment,
+            environment,
             body: body.clone(),
         },
     })
