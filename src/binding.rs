@@ -49,7 +49,7 @@ impl PartialEq for dyn Environment {
             }
         }
 
-        for k2 in self.keys() {
+        for k2 in other.keys() {
             let v1 = self.get(&k2);
             let v2 = other.get(&k2);
 
@@ -183,6 +183,7 @@ impl PartialEq for NeedValue {
 impl Eq for NeedValue {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// A call-by-need environment.
 pub struct CallByNeed {
     storage: HashMap<String, RefCell<NeedValue>>,
 }

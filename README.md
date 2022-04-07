@@ -10,6 +10,7 @@ Right now, the executable for JAM RS is just a Hello, World. Additionally, none 
 
 It's unclear that I'll get any of this done, but these are some possible areas for improvement.
 
+- Find a way to handle mutation and recursion without creating reference cycles.
 - Make compiled executable interpret files and/or stdin.
 - Implement new types of `cons()`: by name, value, and need.
 - Support typing.
