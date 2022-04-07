@@ -259,7 +259,7 @@ fn parse_args<I: Iterator<Item = char>>(
     }
 }
 
-/// Require that `token` be an identifier, and return the string it identifies, 
+/// Require that `token` be an identifier, and return the string it identifies,
 /// or a `ParseError` if not.
 fn require_id(token: Option<TokenResult>) -> Result<String, ParseError> {
     match token.ok_or(ParseError::ReachedEnd)?? {
@@ -271,7 +271,7 @@ fn require_id(token: Option<TokenResult>) -> Result<String, ParseError> {
     }
 }
 
-/// Require that the token be equal to the expected token. Returns an `Err` if 
+/// Require that the token be equal to the expected token. Returns an `Err` if
 /// this is not the case.
 fn require_token(token: Option<TokenResult>, required: Token) -> Result<(), ParseError> {
     let t = token.ok_or(ParseError::ReachedEnd)??;
@@ -344,14 +344,14 @@ mod tests {
     fn test_parse_let() {
         parse_helper(
             "let a := 3; in a + a",
-            Ok(Ast::Let { 
-                defs: vec![("a".into(), Ast::Int(3))], 
-                body: Rc::new(Ast::BinOp { 
-                    rator: BinOp::Plus, 
-                    lhs: Rc::new(Ast::Variable("a".into())), 
-                    rhs: Rc::new(Ast::Variable("a".into())) 
-                })
-            })
+            Ok(Ast::Let {
+                defs: vec![("a".into(), Ast::Int(3))],
+                body: Rc::new(Ast::BinOp {
+                    rator: BinOp::Plus,
+                    lhs: Rc::new(Ast::Variable("a".into())),
+                    rhs: Rc::new(Ast::Variable("a".into())),
+                }),
+            }),
         )
     }
 
