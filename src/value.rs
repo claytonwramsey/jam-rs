@@ -9,8 +9,8 @@ use std::{
 };
 
 use crate::{
-    ast::{Ast, PrimFun, write_list},
-    binding::Environment,
+    ast::{write_list, Ast, PrimFun},
+    binding::{is_same, Environment},
 };
 
 #[derive(Clone, Debug)]
@@ -92,7 +92,7 @@ impl EitherValue {
                 body,
             } => EitherValue::WeakClosure {
                 params: params.clone(),
-                environment: Rc::downgrade(&environment),
+                environment: Rc::downgrade(environment),
                 body: body.clone(),
             },
             _ => self.clone(),
@@ -117,7 +117,7 @@ impl EitherValue {
                 environment,
                 body: _,
             } => {
-                if Rc::ptr_eq(&env, &environment) {
+                if is_same(env.as_ref(), environment.as_ref()) {
                     println!("weakening!");
                     self.as_weak()
                 } else {
@@ -224,12 +224,16 @@ impl Display for Value {
                 let vals: Vec<Value> = l.iter().cloned().collect();
                 write_list(&vals, " ", f)?;
                 write!(f, ")")
-            },
-            Value::Closure { params, environment: _, body } => {
+            }
+            Value::Closure {
+                params,
+                environment: _,
+                body,
+            } => {
                 write!(f, "(closure: ")?;
-                write_list(&params, ", ", f)?;
+                write_list(params, ", ", f)?;
                 write!(f, "-> {body}")
-            },
+            }
             Value::Primitive(fun) => write!(f, "{fun}"),
         }
     }

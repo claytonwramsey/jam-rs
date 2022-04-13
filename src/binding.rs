@@ -6,6 +6,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     fmt::{self, Debug},
+    ptr,
     rc::{Rc, Weak},
 };
 
@@ -48,6 +49,14 @@ pub trait Environment: Debug {
     /// unable to get the key. Although the pointer to `self` is mutable, the
     /// environment may not remove any bindings - this is for call-by-need.
     fn get(&self, key: &str) -> EvalResult;
+}
+
+/// Determine whether two pointers to an environment are the same environment.
+pub fn is_same(lhs: &dyn Environment, rhs: &dyn Environment) -> bool {
+    ptr::eq(
+        lhs as *const dyn Environment as *const u8,
+        rhs as *const dyn Environment as *const u8,
+    )
 }
 
 impl PartialEq for dyn Environment {
@@ -183,24 +192,26 @@ impl Debug for CallByValue {
 
 /* Call-by-name. */
 
+/// The type of a value in call-by-name. Environments are wrapped in an
+/// `Option`. if the option is `None`, then we will use ourselves as an
+/// evaluator.
+type NameValue = (Option<Rc<dyn Environment>>, Ast);
+
 #[derive(Clone, Debug)]
 /// A call-by-name environment.
 pub struct CallByName {
     /// Map from variables to the ASTs they represent. The contents are wrapped
     /// wrapped in a cell to allow overwriting for recursion.
     /// If the outermost option is `None`, then the cell has been initialized
-    /// but not set. Environments are wrapped in an `Option`. if the option is
-    /// `None`, then we will use ourselves as an evaluator.
-    storage: HashMap<String, RefCell<Option<(Option<Rc<dyn Environment>>, Ast)>>>,
+    /// but not set.
+    storage: HashMap<String, RefCell<Option<NameValue>>>,
     /// A weak RC pointing to ourself. We can always safely upgrade this, since
     /// if we can access this, we must still exist.
     self_rc: Weak<CallByName>,
 }
 
 impl CallByName {
-    fn clone_storage(
-        &self,
-    ) -> HashMap<String, RefCell<Option<(Option<Rc<dyn Environment>>, Ast)>>> {
+    fn clone_storage(&self) -> HashMap<String, RefCell<Option<NameValue>>> {
         self.storage
             .iter()
             .map(|(key, value)| (key.clone(), RefCell::new(value.borrow().clone())))
@@ -208,9 +219,7 @@ impl CallByName {
     }
 
     /// Construct a new `CallByName` with a given set of storage.
-    fn with_storage(
-        storage: HashMap<String, RefCell<Option<(Option<Rc<dyn Environment>>, Ast)>>>,
-    ) -> Rc<CallByName> {
+    fn with_storage(storage: HashMap<String, RefCell<Option<NameValue>>>) -> Rc<CallByName> {
         Rc::new_cyclic(|self_rc| CallByName {
             storage,
             self_rc: self_rc.clone(),
@@ -237,7 +246,7 @@ impl Environment for CallByName {
             None => self.self_rc.upgrade().unwrap(),
         };
 
-        evaluate_help(&body, env)
+        evaluate_help(body, env)
     }
 
     fn keys(&self) -> Box<dyn Iterator<Item = String>> {
@@ -301,7 +310,7 @@ impl BuildEnvironment for CallByName {
 #[derive(Clone, Debug)]
 /// The internal values of bindings in a call-by-need environment.
 enum NeedValue {
-    /// The value has not yet been evaluated. Will be `None` if it must be 
+    /// The value has not yet been evaluated. Will be `None` if it must be
     /// evaluated with the environment it is stored in.
     Ast(Option<Rc<dyn Environment>>, Ast),
     /// The value has been evaluated.
@@ -330,9 +339,7 @@ pub struct CallByNeed {
 }
 
 impl CallByNeed {
-    fn clone_storage(
-        &self,
-    ) -> HashMap<String, RefCell<Option<NeedValue>>> {
+    fn clone_storage(&self) -> HashMap<String, RefCell<Option<NeedValue>>> {
         self.storage
             .iter()
             .map(|(key, value)| (key.clone(), RefCell::new(value.borrow().clone())))
@@ -340,9 +347,7 @@ impl CallByNeed {
     }
 
     /// Construct a new `CallByName` with a given set of storage.
-    fn with_storage(
-        storage: HashMap<String, RefCell<Option<NeedValue>>>,
-    ) -> Rc<CallByNeed> {
+    fn with_storage(storage: HashMap<String, RefCell<Option<NeedValue>>>) -> Rc<CallByNeed> {
         Rc::new_cyclic(|self_rc| CallByNeed {
             storage,
             self_rc: self_rc.clone(),
@@ -370,10 +375,7 @@ impl Environment for CallByNeed {
         for (key, body) in bindings {
             new_storage.insert(
                 key.clone(),
-                RefCell::new(Some(NeedValue::Ast(
-                    Some(context.clone()), 
-                    body.clone()
-                ))),
+                RefCell::new(Some(NeedValue::Ast(Some(context.clone()), body.clone()))),
             );
         }
         Ok(CallByNeed::with_storage(new_storage))
@@ -394,10 +396,7 @@ impl Environment for CallByNeed {
         let new_env = CallByNeed::with_storage(new_storage);
 
         for (key, body) in collected_bindings {
-            new_env.storage[key].replace(Some(NeedValue::Ast(
-                None, 
-                body.clone()
-            )));
+            new_env.storage[key].replace(Some(NeedValue::Ast(None, body.clone())));
         }
 
         Ok(new_env)
@@ -412,8 +411,9 @@ impl Environment for CallByNeed {
 
         let value = match &*cell.borrow() {
             Some(NeedValue::Ast(env, ast)) => evaluate_help(
-                ast, 
-                env.clone().unwrap_or(self.self_rc.upgrade().unwrap()),
+                ast,
+                env.clone()
+                    .unwrap_or_else(|| self.self_rc.upgrade().unwrap()),
             )?,
             Some(NeedValue::Value(val)) => return Ok(val.clone()),
             None => return Err(EvalError::ForwardReference(key.into())),
