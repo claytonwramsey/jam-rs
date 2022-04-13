@@ -175,7 +175,7 @@ impl Display for Ast {
                 write_list(params, ", ", f)?;
                 write!(f, " to {}", body)
             }
-            Ast::Primitive(_) => todo!(),
+            Ast::Primitive(fun) => write!(f, "{fun}"),
         }
     }
 }
@@ -238,7 +238,7 @@ impl Display for PrimFun {
 
 /// Helper function for writing out a list of statements, separated by a
 /// string.
-fn write_list<T: Display>(
+pub fn write_list<T: Display>(
     list: &[T],
     sep: &str,
     f: &mut std::fmt::Formatter<'_>,

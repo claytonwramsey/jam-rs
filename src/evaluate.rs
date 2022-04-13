@@ -43,8 +43,7 @@ pub fn evaluate<E: 'static + BuildEnvironment>(ast: &Ast) -> EvalResult {
 /// A helper function to evaluate a Jam expresion given a pre-existing
 /// environment.
 pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult {
-    println!("evaluate: {ast}");
-    Ok(match ast {
+    let val = match ast {
         Ast::Int(n) => Value::Int(*n as i32),
         Ast::Bool(b) => Value::Bool(*b),
         Ast::Empty => Value::List(LinkedList::new()),
@@ -64,7 +63,8 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
                             actual: params.len(),
                         });
                     }
-                    let new_env = closure_environment.with(&mut keys.iter().zip(params.iter()), environment)?;
+                    let new_env = closure_environment
+                        .with(&mut keys.iter().zip(params.iter()), environment)?;
                     evaluate_help(&body, new_env)?
                 }
                 Value::Primitive(f) => {
@@ -116,7 +116,10 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
             environment,
             body: body.clone(),
         },
-    })
+    };
+    // Useful message for debugging.
+    // println!("[{ast}] -> [{val}]");
+    Ok(val)
 }
 
 /// Evaluate a primitive function call. `args` is the values of all the
@@ -166,6 +169,7 @@ fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
                 Value::List(mut l) => {
                     let mut new_list = LinkedList::new();
                     new_list.append(&mut l);
+                    new_list.push_front(args[0].to_owned());
                     Value::List(new_list)
                 }
                 a => return Err(EvalError::WrongPrimArg(f, a)),
@@ -381,7 +385,7 @@ mod tests {
                 fact(6)
         "#;
         test_eval_helper::<CallByValue>(s, Ok(Value::Int(720)));
-        // test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
-        // test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
+        test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
+        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
     }
 }

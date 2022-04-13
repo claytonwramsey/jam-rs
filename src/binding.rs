@@ -3,7 +3,6 @@
 //! required to implement a custom binding scheme.
 
 use std::{
-    borrow::Borrow,
     cell::RefCell,
     collections::HashMap,
     fmt::{self, Debug},
@@ -30,7 +29,7 @@ pub trait Environment: Debug {
     fn keys(&self) -> Box<dyn Iterator<Item = String>>;
 
     /// Create a new environment with a new set of bindings corresponding to
-    /// the items of the given iterator. The context is the environment in 
+    /// the items of the given iterator. The context is the environment in
     /// which the new bindings must be made.
     fn with(
         &self,
@@ -83,9 +82,6 @@ impl Eq for dyn Environment {}
 pub struct CallByValue {
     /// The stored key-value pairs.
     storage: HashMap<String, RefCell<Option<EitherValue>>>,
-    /// A weak pointer to ourself. We may assume it is always initialized
-    /// correctly.
-    self_rc: Weak<CallByValue>,
 }
 
 impl CallByValue {
@@ -101,13 +97,6 @@ impl CallByValue {
                 )
             })
             .collect()
-    }
-
-    fn with_storage(storage: HashMap<String, RefCell<Option<EitherValue>>>) -> Rc<CallByValue> {
-        Rc::new_cyclic(|self_rc| CallByValue {
-            storage,
-            self_rc: self_rc.clone(),
-        })
     }
 }
 
@@ -146,7 +135,9 @@ impl Environment for CallByValue {
 
             new_storage.insert(key.clone(), RefCell::new(Some(value.into())));
         }
-        Ok(CallByValue::with_storage(new_storage))
+        Ok(Rc::new(CallByValue {
+            storage: new_storage,
+        }))
     }
 
     fn with_recursive(
@@ -160,13 +151,13 @@ impl Environment for CallByValue {
             // mutability
             new_storage.insert(key.to_string(), RefCell::new(None));
         }
-        let new_env = CallByValue::with_storage(new_storage);
+        let new_env = Rc::new(CallByValue {
+            storage: new_storage,
+        });
         for (key, body) in collected_bindings {
-            println!("binding {key} to {body}");
             let either: EitherValue = evaluate_help(body, new_env.clone())?.into();
             // now evaluate the body using our new environment
             new_env.storage[key].replace(Some(either.demote_in(new_env.clone())));
-            println!("bound {key} to {body}");
         }
         Ok(new_env)
     }
@@ -174,9 +165,8 @@ impl Environment for CallByValue {
 
 impl BuildEnvironment for CallByValue {
     fn build() -> Rc<dyn Environment> {
-        Rc::new_cyclic(|self_rc| CallByValue {
+        Rc::new(CallByValue {
             storage: HashMap::new(),
-            self_rc: self_rc.clone(),
         })
     }
 }
@@ -185,41 +175,79 @@ impl Debug for CallByValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "CallByValue {{ ")?;
         for (key, value) in self.storage.iter() {
-            write!(
-                f,
-                "{key:?}: {:?}, ",
-                value
-            )?;
+            write!(f, "{key:?}: {:?}, ", value)?;
         }
         write!(f, "}}")
     }
 }
 
-/* Call-by-name */
+/* Call-by-name. */
 
 #[derive(Clone, Debug)]
 /// A call-by-name environment.
 pub struct CallByName {
-    /// map from variables to the ASTs they represent
-    /// wrapped in a cell to allow overwriting
+    /// Map from variables to the ASTs they represent. The contents are wrapped
+    /// wrapped in a cell to allow overwriting for recursion.
     /// If the outermost option is `None`, then the cell has been initialized
-    /// but not set.
-    /// environments are wrapped in an `Option`. if the option is `None`, then
-    /// we will use ourselves as an evaluator.
+    /// but not set. Environments are wrapped in an `Option`. if the option is
+    /// `None`, then we will use ourselves as an evaluator.
     storage: HashMap<String, RefCell<Option<(Option<Rc<dyn Environment>>, Ast)>>>,
-    /// A weak RC pointing to ourself. The wrapping cell and option are used
-    /// for construction, but can be assumed to be properly initialized with
-    /// `Some` by the time of operation.
+    /// A weak RC pointing to ourself. We can always safely upgrade this, since
+    /// if we can access this, we must still exist.
     self_rc: Weak<CallByName>,
+}
+
+impl CallByName {
+    fn clone_storage(
+        &self,
+    ) -> HashMap<String, RefCell<Option<(Option<Rc<dyn Environment>>, Ast)>>> {
+        self.storage
+            .iter()
+            .map(|(key, value)| (key.clone(), RefCell::new(value.borrow().clone())))
+            .collect()
+    }
+
+    /// Construct a new `CallByName` with a given set of storage.
+    fn with_storage(
+        storage: HashMap<String, RefCell<Option<(Option<Rc<dyn Environment>>, Ast)>>>,
+    ) -> Rc<CallByName> {
+        Rc::new_cyclic(|self_rc| CallByName {
+            storage,
+            self_rc: self_rc.clone(),
+        })
+    }
 }
 
 impl Environment for CallByName {
     fn get(&self, key: &str) -> EvalResult {
-        todo!()
+        let cell = self
+            .storage
+            .get(key)
+            // unable to find match for this key
+            .ok_or_else(|| EvalError::Unbound(key.into()))?;
+
+        let cell_ref = (*cell).borrow();
+
+        let (opt_env, body) = cell_ref
+            .as_ref()
+            .ok_or_else(|| EvalError::ForwardReference(key.into()))?;
+
+        let env = match opt_env {
+            Some(e) => e.clone(),
+            None => self.self_rc.upgrade().unwrap(),
+        };
+
+        evaluate_help(&body, env)
     }
 
     fn keys(&self) -> Box<dyn Iterator<Item = String>> {
-        todo!()
+        Box::new(
+            self.storage
+                .keys()
+                .cloned()
+                .collect::<Vec<String>>()
+                .into_iter(),
+        )
     }
 
     fn with(
@@ -227,14 +255,35 @@ impl Environment for CallByName {
         bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
         context: Rc<dyn Environment>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
-        todo!()
+        let mut new_storage = self.clone_storage();
+        for (key, body) in bindings {
+            new_storage.insert(
+                key.clone(),
+                RefCell::new(Some((Some(context.clone()), body.clone()))),
+            );
+        }
+        Ok(CallByName::with_storage(new_storage))
     }
 
     fn with_recursive(
         &self,
         bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
-        todo!()
+        // collect so we can iterate twice
+        let mut new_storage = self.clone_storage();
+        let collected_bindings: Vec<(&String, &Ast)> = bindings.collect();
+
+        for (key, _) in collected_bindings.iter() {
+            new_storage.insert(key.to_string(), RefCell::new(None));
+        }
+
+        let new_env = CallByName::with_storage(new_storage);
+
+        for (key, body) in collected_bindings {
+            new_env.storage[key].replace(Some((None, body.clone())));
+        }
+
+        Ok(new_env)
     }
 }
 
@@ -252,8 +301,9 @@ impl BuildEnvironment for CallByName {
 #[derive(Clone, Debug)]
 /// The internal values of bindings in a call-by-need environment.
 enum NeedValue {
-    /// The value has not yet been evaluated.
-    Ast(Rc<dyn Environment>, Ast),
+    /// The value has not yet been evaluated. Will be `None` if it must be 
+    /// evaluated with the environment it is stored in.
+    Ast(Option<Rc<dyn Environment>>, Ast),
     /// The value has been evaluated.
     Value(Value),
 }
@@ -273,13 +323,42 @@ impl Eq for NeedValue {}
 #[derive(Debug, Clone, Default)]
 /// A call-by-need environment.
 pub struct CallByNeed {
-    storage: HashMap<String, Option<RefCell<NeedValue>>>,
+    /// The stored values.
+    storage: HashMap<String, RefCell<Option<NeedValue>>>,
+    /// A reference to ourselves, for use in recursion.
     self_rc: Weak<CallByNeed>,
+}
+
+impl CallByNeed {
+    fn clone_storage(
+        &self,
+    ) -> HashMap<String, RefCell<Option<NeedValue>>> {
+        self.storage
+            .iter()
+            .map(|(key, value)| (key.clone(), RefCell::new(value.borrow().clone())))
+            .collect()
+    }
+
+    /// Construct a new `CallByName` with a given set of storage.
+    fn with_storage(
+        storage: HashMap<String, RefCell<Option<NeedValue>>>,
+    ) -> Rc<CallByNeed> {
+        Rc::new_cyclic(|self_rc| CallByNeed {
+            storage,
+            self_rc: self_rc.clone(),
+        })
+    }
 }
 
 impl Environment for CallByNeed {
     fn keys(&self) -> Box<dyn Iterator<Item = String>> {
-        todo!()
+        Box::new(
+            self.storage
+                .keys()
+                .cloned()
+                .collect::<Vec<String>>()
+                .into_iter(),
+        )
     }
 
     fn with(
@@ -287,18 +366,61 @@ impl Environment for CallByNeed {
         bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
         context: Rc<dyn Environment>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
-        todo!()
+        let mut new_storage = self.clone_storage();
+        for (key, body) in bindings {
+            new_storage.insert(
+                key.clone(),
+                RefCell::new(Some(NeedValue::Ast(
+                    Some(context.clone()), 
+                    body.clone()
+                ))),
+            );
+        }
+        Ok(CallByNeed::with_storage(new_storage))
     }
 
     fn with_recursive(
         &self,
         bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
-        todo!()
+        // collect so we can iterate twice
+        let mut new_storage = self.clone_storage();
+        let collected_bindings: Vec<(&String, &Ast)> = bindings.collect();
+
+        for (key, _) in collected_bindings.iter() {
+            new_storage.insert(key.to_string(), RefCell::new(None));
+        }
+
+        let new_env = CallByNeed::with_storage(new_storage);
+
+        for (key, body) in collected_bindings {
+            new_env.storage[key].replace(Some(NeedValue::Ast(
+                None, 
+                body.clone()
+            )));
+        }
+
+        Ok(new_env)
     }
 
     fn get(&self, key: &str) -> EvalResult {
-        todo!()
+        let cell = self
+            .storage
+            .get(key)
+            // unable to find match for this key
+            .ok_or_else(|| EvalError::Unbound(key.into()))?;
+
+        let value = match &*cell.borrow() {
+            Some(NeedValue::Ast(env, ast)) => evaluate_help(
+                ast, 
+                env.clone().unwrap_or(self.self_rc.upgrade().unwrap()),
+            )?,
+            Some(NeedValue::Value(val)) => return Ok(val.clone()),
+            None => return Err(EvalError::ForwardReference(key.into())),
+        };
+        cell.replace(Some(NeedValue::Value(value.clone())));
+
+        Ok(value)
     }
 }
 

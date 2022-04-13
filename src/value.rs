@@ -4,12 +4,12 @@
 
 use std::{
     collections::LinkedList,
-    fmt, ptr,
+    fmt::{self, Display},
     rc::{Rc, Weak},
 };
 
 use crate::{
-    ast::{Ast, PrimFun},
+    ast::{Ast, PrimFun, write_list},
     binding::Environment,
 };
 
@@ -92,7 +92,7 @@ impl EitherValue {
                 body,
             } => EitherValue::WeakClosure {
                 params: params.clone(),
-                environment: Rc::downgrade(&environment), 
+                environment: Rc::downgrade(&environment),
                 body: body.clone(),
             },
             _ => self.clone(),
@@ -107,9 +107,11 @@ impl EitherValue {
     /// Will panic if the environment requested for promotion no longer exists.
     pub fn demote_in(&self, env: Rc<dyn Environment>) -> EitherValue {
         match self {
-            EitherValue::List(l) => {
-                EitherValue::List(l.iter().map(|either| either.demote_in(env.clone())).collect())
-            }
+            EitherValue::List(l) => EitherValue::List(
+                l.iter()
+                    .map(|either| either.demote_in(env.clone()))
+                    .collect(),
+            ),
             EitherValue::StrongClosure {
                 params: _,
                 environment,
@@ -211,3 +213,24 @@ impl PartialEq for Value {
 }
 
 impl Eq for Value {}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Int(i) => write!(f, "{i}"),
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::List(l) => {
+                write!(f, "(")?;
+                let vals: Vec<Value> = l.iter().cloned().collect();
+                write_list(&vals, " ", f)?;
+                write!(f, ")")
+            },
+            Value::Closure { params, environment: _, body } => {
+                write!(f, "(closure: ")?;
+                write_list(&params, ", ", f)?;
+                write!(f, "-> {body}")
+            },
+            Value::Primitive(fun) => write!(f, "{fun}"),
+        }
+    }
+}
