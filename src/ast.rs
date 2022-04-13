@@ -236,8 +236,8 @@ impl Display for PrimFun {
     }
 }
 
-/// Helper function for writing out a list of statements, separated by a 
-/// string. 
+/// Helper function for writing out a list of statements, separated by a
+/// string.
 fn write_list<T: Display>(
     list: &[T],
     sep: &str,

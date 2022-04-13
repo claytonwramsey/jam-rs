@@ -1,9 +1,9 @@
-use std::rc::Rc;
+use std::{collections::LinkedList, rc::Rc};
 
 use crate::{
     ast::{Ast, BinOp, PrimFun, UnOp},
     binding::{BuildEnvironment, Environment},
-    value::{ListVal, Value},
+    value::Value,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +23,8 @@ pub enum EvalError {
     WrongUnOpArg(UnOp, Value),
     /// The condition to an if statement was not a bool.
     TestNonBool(Value),
+    /// A forward reference was created in a let statement.
+    ForwardReference(String),
     /// Divide by zero was attempted.
     DivZero,
 }
@@ -35,16 +37,17 @@ pub type EvalResult = Result<Value, EvalError>;
 /// `Err` if the expression is incorrect in some way (typically due to type
 /// errors).
 pub fn evaluate<E: 'static + BuildEnvironment>(ast: &Ast) -> EvalResult {
-    evaluate_help(ast, Rc::new(E::default()))
+    evaluate_help(ast, E::build())
 }
 
 /// A helper function to evaluate a Jam expresion given a pre-existing
 /// environment.
 pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult {
+    println!("evaluate: {ast}");
     Ok(match ast {
         Ast::Int(n) => Value::Int(*n as i32),
         Ast::Bool(b) => Value::Bool(*b),
-        Ast::Empty => Value::List(ListVal::Empty),
+        Ast::Empty => Value::List(LinkedList::new()),
         Ast::Variable(v) => environment.get(v)?,
         Ast::Primitive(f) => Value::Primitive(*f),
         Ast::App { rator, params } => {
@@ -55,19 +58,14 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
                     environment: closure_environment,
                     body,
                 } => {
-                    if keys.len() != params.len() {
+                    if params.len() != keys.len() {
                         return Err(EvalError::WrongArgCount {
                             expected: keys.len(),
                             actual: params.len(),
                         });
                     }
-
-                    let mut new_env = closure_environment.duplicate();
-                    for (key, param) in keys.iter().zip(params.iter()) {
-                        new_env.store(environment.clone(), key, param)?;
-                    }
-
-                    evaluate_help(&body, Rc::from(new_env))?
+                    let new_env = closure_environment.with(&mut keys.iter().zip(params.iter()), environment)?;
+                    evaluate_help(&body, new_env)?
                 }
                 Value::Primitive(f) => {
                     let mut args = Vec::new();
@@ -109,13 +107,10 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
                 _ => return Err(EvalError::TestNonBool(test_val)),
             }
         }
-        Ast::Let { defs, body } => {
-            let mut new_env = environment.duplicate();
-            for (key, def_body) in defs.iter() {
-                new_env.store(environment.clone(), key, def_body)?;
-            }
-            evaluate_help(body, Rc::from(new_env))?
-        }
+        Ast::Let { defs, body } => evaluate_help(
+            body,
+            environment.with_recursive(&mut defs.iter().map(|(k, b)| (k, b)))?,
+        )?,
         Ast::Map { params, body } => Value::Closure {
             params: params.clone(),
             environment,
@@ -137,7 +132,7 @@ fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
     Ok(match f {
         PrimFun::IsNumber => {
             require_param_len(1)?;
-            Value::Bool(matches!(args[0], Value::Bool(_)))
+            Value::Bool(matches!(args[0], Value::Int(_)))
         }
         PrimFun::IsFunction => {
             require_param_len(1)?;
@@ -156,36 +151,47 @@ fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
         }
         PrimFun::IsEmpty => {
             require_param_len(1)?;
-            Value::Bool(matches!(args[0], Value::List(ListVal::Empty)))
+            Value::Bool(args[0] == Value::List(LinkedList::new()))
         }
         PrimFun::IsCons => {
             require_param_len(1)?;
-            Value::Bool(matches!(
-                args[0],
-                Value::List(ListVal::Cons { head: _, tail: _ })
-            ))
+            Value::Bool(match &args[0] {
+                Value::List(l) => !l.is_empty(),
+                _ => false,
+            })
         }
         PrimFun::Cons => {
             require_param_len(2)?;
             match args[1].to_owned() {
-                Value::List(l) => Value::List(ListVal::Cons {
-                    head: Rc::new(args[0].to_owned()),
-                    tail: Rc::new(l),
-                }),
+                Value::List(mut l) => {
+                    let mut new_list = LinkedList::new();
+                    new_list.append(&mut l);
+                    Value::List(new_list)
+                }
                 a => return Err(EvalError::WrongPrimArg(f, a)),
             }
         }
         PrimFun::First => {
             require_param_len(1)?;
             match args[0].to_owned() {
-                Value::List(ListVal::Cons { head, tail: _ }) => head.as_ref().clone(),
+                Value::List(l) => l
+                    .front()
+                    .ok_or_else(|| EvalError::WrongPrimArg(f, args[0].clone()))?
+                    .clone(),
                 a => return Err(EvalError::WrongPrimArg(f, a)),
             }
         }
         PrimFun::Rest => {
             require_param_len(1)?;
             match args[0].to_owned() {
-                Value::List(ListVal::Cons { head: _, tail }) => Value::List(tail.as_ref().clone()),
+                Value::List(mut l) => {
+                    if l.is_empty() {
+                        return Err(EvalError::WrongPrimArg(f, args[0].clone()));
+                    } else {
+                        l.pop_front();
+                        Value::List(l)
+                    }
+                }
                 a => return Err(EvalError::WrongPrimArg(f, a)),
             }
         }
@@ -360,5 +366,22 @@ mod tests {
         "#;
         test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
         test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
+    }
+
+    #[test]
+    fn test_recursion() {
+        let s = r#"
+            let 
+                fact := map n to
+                    if n = 0 then
+                        1
+                    else
+                        n * fact(n - 1);
+            in
+                fact(6)
+        "#;
+        test_eval_helper::<CallByValue>(s, Ok(Value::Int(720)));
+        // test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
+        // test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
     }
 }

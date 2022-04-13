@@ -1,4 +1,4 @@
-//! A module containing tools for tokenizing a Jam program into a 
+//! A module containing tools for tokenizing a Jam program into a
 //! parser-friendly LL(1) format.
 
 use std::{fmt::Display, iter::Peekable};
@@ -87,7 +87,7 @@ pub struct TokenStream<I: Iterator<Item = char>> {
 
 impl<I: Iterator<Item = char>> TokenStream<I> {
     #[allow(unused)]
-    /// Construct a new `TokenStream` for any source which can iterate over 
+    /// Construct a new `TokenStream` for any source which can iterate over
     /// characters.
     pub fn new(iter: I) -> TokenStream<I> {
         TokenStream {
@@ -99,8 +99,8 @@ impl<I: Iterator<Item = char>> TokenStream<I> {
 impl<I: Iterator<Item = char>> Iterator for TokenStream<I> {
     type Item = TokenResult;
 
-    /// Get the next token. Will return a `LexError` if it is unable to parse 
-    /// out a token, either due to the source of characters running out or 
+    /// Get the next token. Will return a `LexError` if it is unable to parse
+    /// out a token, either due to the source of characters running out or
     /// providing an unexpected character.
     fn next(&mut self) -> Option<Self::Item> {
         Some(Ok(match self.source.next()? {
