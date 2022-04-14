@@ -118,10 +118,8 @@ impl EitherValue {
                 body: _,
             } => {
                 if is_same(env.as_ref(), environment.as_ref()) {
-                    println!("weakening!");
                     self.as_weak()
                 } else {
-                    println!("maintaining strength!");
                     self.clone()
                 }
             }

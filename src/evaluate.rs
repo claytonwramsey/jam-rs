@@ -388,4 +388,38 @@ mod tests {
         test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
         test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
     }
+
+    #[test]
+    fn test_fib() {
+        let s = r#"
+            let
+                fib := map n to 
+                    if n = 0 then 0
+                    else if n = 1 then 1
+                    else fib(n - 1) + fib(n - 2);
+            in
+                fib(20)
+        "#;
+        test_eval_helper::<CallByValue>(s, Ok(Value::Int(6765)));
+        test_eval_helper::<CallByName>(s, Ok(Value::Int(6765)));
+        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(6765)));
+    }
+
+    #[test]
+    fn test_list_fib() {
+        let s = r#"
+            let 
+                fib_next := map l to cons(first(l) + first(rest(l)), l);
+                fib_help := map n to 
+                    if n = 1 then cons(1, cons(0, empty))
+                    else if n = 0 then cons(0, empty)
+                    else fib_next(fib_help(n - 1));
+                fib := map n to first(fib_help(n));
+            in 
+                fib(10)
+        "#;
+        test_eval_helper::<CallByValue>(s, Ok(Value::Int(55)));
+        test_eval_helper::<CallByName>(s, Ok(Value::Int(55)));
+        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(55)));
+    }
 }
