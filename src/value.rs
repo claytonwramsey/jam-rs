@@ -14,7 +14,7 @@ use crate::{
     binding::Environment,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq)]
 /// The return value of a Jam program.
 pub enum Value {
     /// A signed integer.
@@ -108,9 +108,7 @@ pub fn strengthen(ev: &Rc<EitherValue>) -> Rc<EitherValue> {
                 // if all children are strong, reuse this value
                 ev.clone()
             } else {
-                Rc::new(EitherValue::List(
-                    l.iter().map(strengthen).collect(),
-                ))
+                Rc::new(EitherValue::List(l.iter().map(strengthen).collect()))
             }
         }
         EitherValue::WeakClosure {
@@ -262,8 +260,6 @@ impl PartialEq for Value {
         }
     }
 }
-
-impl Eq for Value {}
 
 impl Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

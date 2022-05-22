@@ -299,7 +299,7 @@ impl BuildEnvironment for CallByName {
 
 /* Call-by-need. */
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// The internal values of bindings in a call-by-need environment.
 enum NeedValue {
     /// The value has not yet been evaluated. Will be `None` if it must be
@@ -308,18 +308,6 @@ enum NeedValue {
     /// The value has been evaluated.
     Value(Value),
 }
-
-impl PartialEq for NeedValue {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Ast(l0, l1), Self::Ast(r0, r1)) => l0 == r0 && l1 == r1,
-            (Self::Value(l0), Self::Value(r0)) => l0 == r0,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for NeedValue {}
 
 #[derive(Debug, Clone, Default)]
 /// A call-by-need environment.
