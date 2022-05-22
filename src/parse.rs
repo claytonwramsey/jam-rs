@@ -112,7 +112,7 @@ fn parse_let<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
         let id = require_id(t.clone())?;
         require_token(tokens.next().clone(), Token::Walrus)?;
         let rhs = parse_exp(tokens)?;
-        defs.push((id, rhs));
+        defs.push((id, Rc::new(rhs)));
         require_token(tokens.next(), Token::Semicolon)?;
         t = tokens.next();
     }
@@ -239,14 +239,14 @@ fn parse_factor<I: Iterator<Item = char>>(
 /// following the list. Consumes the closing right parenthesis as well.
 fn parse_args<I: Iterator<Item = char>>(
     tokens: &mut TokenPeeker<I>,
-) -> Result<Vec<Ast>, ParseError> {
+) -> Result<Vec<Rc<Ast>>, ParseError> {
     let mut args = Vec::new();
     if tokens.peek() == Some(&Ok(Token::RightParenthesis)) {
         tokens.next();
         return Ok(args);
     }
     loop {
-        args.push(parse_exp(tokens)?);
+        args.push(Rc::new(parse_exp(tokens)?));
         match tokens.next().ok_or(ParseError::ReachedEnd)?? {
             Token::RightParenthesis => return Ok(args),
             Token::Comma => (),
@@ -316,7 +316,7 @@ mod tests {
                 rator: BinOp::Plus,
                 lhs: Rc::new(Ast::App {
                     rator: Rc::new(Ast::Variable("f".into())),
-                    params: vec![Ast::Variable("x".into())],
+                    params: vec![Rc::new(Ast::Variable("x".into()))],
                 }),
                 rhs: Rc::new(Ast::BinOp {
                     rator: BinOp::Mul,
@@ -333,10 +333,10 @@ mod tests {
             "first(cons(1, empty))",
             Ok(Ast::App {
                 rator: Rc::new(Ast::Primitive(PrimFun::First)),
-                params: vec![Ast::App {
+                params: vec![Rc::new(Ast::App {
                     rator: Rc::new(Ast::Primitive(PrimFun::Cons)),
-                    params: vec![Ast::Int(1), Ast::Empty],
-                }],
+                    params: vec![Rc::new(Ast::Int(1)), Rc::new(Ast::Empty)],
+                })],
             }),
         );
     }
@@ -346,7 +346,7 @@ mod tests {
         parse_helper(
             "let a := 3; in a + a",
             Ok(Ast::Let {
-                defs: vec![("a".into(), Ast::Int(3))],
+                defs: vec![("a".into(), Rc::new(Ast::Int(3)))],
                 body: Rc::new(Ast::BinOp {
                     rator: BinOp::Plus,
                     lhs: Rc::new(Ast::Variable("a".into())),

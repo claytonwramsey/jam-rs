@@ -3,6 +3,7 @@
 //! `cons`.
 
 use std::{
+    borrow::Borrow,
     collections::LinkedList,
     fmt::{self, Display},
     rc::{Rc, Weak},
@@ -10,7 +11,7 @@ use std::{
 
 use crate::{
     ast::{write_list, Ast, PrimFun},
-    binding::{is_same, Environment},
+    binding::Environment,
 };
 
 #[derive(Clone, Debug)]
@@ -41,7 +42,7 @@ pub enum EitherValue {
     /// A boolean.
     Bool(bool),
     /// A list.
-    List(LinkedList<EitherValue>),
+    List(LinkedList<Rc<EitherValue>>),
     /// A closure with strong references to its definition environment.
     StrongClosure {
         params: Vec<String>,
@@ -58,131 +59,183 @@ pub enum EitherValue {
     Primitive(PrimFun),
 }
 
+/// Creates a version of this value, where, if it was previously a strong
+/// value pointing to the given environment, promotes it.
+///
+/// # Panics
+///
+/// Will panic if the environment requested for promotion no longer exists.
+pub fn demote_in(ev: &Rc<EitherValue>, env: &dyn Environment) -> Rc<EitherValue> {
+    match ev.borrow() {
+        EitherValue::List(l) => {
+            // don't bother demoting anything if we don't need to
+            if ev.strongly_refers_to(env) {
+                Rc::new(EitherValue::List(
+                    l.iter().map(|val| demote_in(val, env)).collect(),
+                ))
+            } else {
+                ev.clone()
+            }
+        }
+        EitherValue::StrongClosure {
+            params,
+            environment,
+            body,
+        } => {
+            if std::ptr::eq(
+                environment.as_ref() as *const dyn Environment as *const u8,
+                env as *const dyn Environment as *const u8,
+            ) {
+                Rc::new(EitherValue::WeakClosure {
+                    params: params.clone(),
+                    environment: Rc::downgrade(environment),
+                    body: body.clone(),
+                })
+            } else {
+                ev.clone()
+            }
+        }
+        _ => ev.clone(),
+    }
+}
+
+/// Convert this value to one which has no `WeakClosure`s. Will have no effect
+/// if there were no weak closures to begin with, yielding the original Rc.
+pub fn strengthen(ev: &Rc<EitherValue>) -> Rc<EitherValue> {
+    match ev.borrow() {
+        EitherValue::List(l) => {
+            if l.iter().all(|val| val.is_strong()) {
+                // if all children are strong, reuse this value
+                ev.clone()
+            } else {
+                Rc::new(EitherValue::List(
+                    l.iter().map(strengthen).collect(),
+                ))
+            }
+        }
+        EitherValue::WeakClosure {
+            params,
+            environment,
+            body,
+        } => Rc::new(EitherValue::StrongClosure {
+            params: params.clone(),
+            environment: environment.upgrade().unwrap(), // might panic
+            body: body.clone(),
+        }),
+        _ => ev.clone(),
+    }
+}
+
 impl EitherValue {
-    /// Convert this value to one which only uses `StrongClosure`s.
-    pub fn as_strong(&self) -> EitherValue {
+    /// Determine whether all closures in this either value are strong. If
+    /// there is one weak closure, this value is not strong.
+    fn is_strong(&self) -> bool {
         match self {
-            EitherValue::List(l) => {
-                EitherValue::List(l.iter().map(|either| either.as_strong()).collect())
-            }
+            EitherValue::List(l) => l.iter().all(|ev| ev.is_strong()),
             EitherValue::WeakClosure {
-                params,
-                environment,
-                body,
-            } => EitherValue::StrongClosure {
-                params: params.clone(),
-                environment: environment.upgrade().unwrap(), // might panic
-                body: body.clone(),
-            },
-            _ => self.clone(),
+                params: _,
+                environment: _,
+                body: _,
+            } => false,
+            _ => true,
         }
     }
 
-    /// Creates a version of this value where all strong references have been
-    /// demoted. May cause a panic in the future if the weak references in this
-    /// value are the last reference to their environment.
-    pub fn as_weak(&self) -> EitherValue {
+    /// Determine whether this value strongly refers to a given environment.
+    fn strongly_refers_to(&self, env: &dyn Environment) -> bool {
         match self {
-            EitherValue::List(l) => {
-                EitherValue::List(l.iter().map(|either| either.as_weak()).collect())
-            }
-            EitherValue::StrongClosure {
-                params,
-                environment,
-                body,
-            } => EitherValue::WeakClosure {
-                params: params.clone(),
-                environment: Rc::downgrade(environment),
-                body: body.clone(),
-            },
-            _ => self.clone(),
-        }
-    }
-
-    /// Creates a version of this value, where, if it was previously a strong
-    /// value pointing to the given environment, promotes it.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if the environment requested for promotion no longer exists.
-    pub fn demote_in(&self, env: Rc<dyn Environment>) -> EitherValue {
-        match self {
-            EitherValue::List(l) => EitherValue::List(
-                l.iter()
-                    .map(|either| either.demote_in(env.clone()))
-                    .collect(),
-            ),
+            EitherValue::List(l) => l.iter().any(|val| val.strongly_refers_to(env)),
             EitherValue::StrongClosure {
                 params: _,
                 environment,
                 body: _,
-            } => {
-                if is_same(env.as_ref(), environment.as_ref()) {
-                    self.as_weak()
-                } else {
-                    self.clone()
-                }
-            }
-            _ => self.clone(),
+            } => std::ptr::eq(
+                environment.as_ref() as *const dyn Environment as *const u8,
+                env as *const dyn Environment as *const u8,
+            ),
+            _ => false,
         }
     }
 }
 
-impl From<EitherValue> for Value {
+impl From<&EitherValue> for Value {
     /// Convert an `EitherValue` into a strong `Value`, upgrading any
     /// references along the way.
     ///
     /// # Panics
     ///
     /// Will panic if a weak reference to an environment has expired.
-    fn from(ev: EitherValue) -> Self {
+    fn from(ev: &EitherValue) -> Self {
         match ev {
-            EitherValue::Int(i) => Value::Int(i),
-            EitherValue::Bool(b) => Value::Bool(b),
+            EitherValue::Int(i) => Value::Int(*i),
+            EitherValue::Bool(b) => Value::Bool(*b),
             EitherValue::List(l) => {
-                Value::List(l.into_iter().map(|either| either.into()).collect())
+                Value::List(l.iter().map(|either| either.as_ref().into()).collect())
             }
             EitherValue::StrongClosure {
                 params,
                 environment,
                 body,
             } => Value::Closure {
-                params,
-                environment,
-                body,
+                params: params.clone(),
+                environment: environment.clone(),
+                body: body.clone(),
             },
             EitherValue::WeakClosure {
                 params,
                 environment,
                 body,
             } => Value::Closure {
-                params,
+                params: params.clone(),
                 environment: environment.upgrade().unwrap(), // might panic
-                body,
+                body: body.clone(),
             },
-            EitherValue::Primitive(f) => Value::Primitive(f),
+            EitherValue::Primitive(f) => Value::Primitive(*f),
         }
     }
 }
 
-impl From<Value> for EitherValue {
+impl<T> From<T> for Value
+where
+    T: AsRef<EitherValue>,
+{
+    fn from(r: T) -> Self {
+        r.as_ref().into()
+    }
+}
+
+impl From<EitherValue> for Value {
+    fn from(ev: EitherValue) -> Self {
+        (&ev).into()
+    }
+}
+
+impl From<&Value> for EitherValue {
     /// Construct an `EitherValue`, using a strong reference for each closure.
-    fn from(value: Value) -> Self {
+    fn from(value: &Value) -> Self {
         match value {
-            Value::Int(i) => EitherValue::Int(i),
-            Value::Bool(b) => EitherValue::Bool(b),
-            Value::List(l) => EitherValue::List(l.into_iter().map(|item| item.into()).collect()),
+            Value::Int(i) => EitherValue::Int(*i),
+            Value::Bool(b) => EitherValue::Bool(*b),
+            Value::List(l) => {
+                EitherValue::List(l.iter().map(|item| Rc::new(item.into())).collect())
+            }
             Value::Closure {
                 params,
                 environment,
                 body,
             } => EitherValue::StrongClosure {
-                params,
-                environment,
-                body,
+                params: params.clone(),
+                environment: environment.clone(),
+                body: body.clone(),
             },
-            Value::Primitive(f) => EitherValue::Primitive(f),
+            Value::Primitive(f) => EitherValue::Primitive(*f),
         }
+    }
+}
+
+impl From<Value> for EitherValue {
+    fn from(value: Value) -> Self {
+        (&value).into()
     }
 }
 

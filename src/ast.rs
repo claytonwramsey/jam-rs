@@ -22,7 +22,7 @@ pub enum Ast {
         /// The function being called.
         rator: Rc<Ast>,
         /// The parameters to the function.
-        params: Vec<Ast>,
+        params: Vec<Rc<Ast>>,
     },
     /// The application of a binary operation.
     BinOp {
@@ -53,7 +53,7 @@ pub enum Ast {
     Let {
         /// The variables defined. Each element is a (identifier, contents)
         /// pair.
-        defs: Vec<(String, Ast)>,
+        defs: Vec<(String, Rc<Ast>)>,
         /// The body of the let statement which is evaluated with the bindings
         /// in the defs.
         body: Rc<Ast>,

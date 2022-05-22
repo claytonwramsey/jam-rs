@@ -6,16 +6,16 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     fmt::{self, Debug},
-    ptr,
     rc::{Rc, Weak},
 };
 
 use crate::{
     ast::Ast,
     evaluate::{evaluate_help, EvalError, EvalResult},
-    value::{EitherValue, Value},
+    value::{demote_in, strengthen, EitherValue, Value},
 };
 
+/// A simple builder trait for creating environments.
 pub trait BuildEnvironment {
     /// Construct a new environment.
     fn build() -> Rc<dyn Environment>;
@@ -34,7 +34,7 @@ pub trait Environment: Debug {
     /// which the new bindings must be made.
     fn with(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
         context: Rc<dyn Environment>,
     ) -> Result<Rc<dyn Environment>, EvalError>;
 
@@ -42,21 +42,13 @@ pub trait Environment: Debug {
     /// binding.
     fn with_recursive(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
     ) -> Result<Rc<dyn Environment>, EvalError>;
 
     /// Get the key from an environment. Returns an unbound error if it is
     /// unable to get the key. Although the pointer to `self` is mutable, the
     /// environment may not remove any bindings - this is for call-by-need.
-    fn get(&self, key: &str) -> EvalResult;
-}
-
-/// Determine whether two pointers to an environment are the same environment.
-pub fn is_same(lhs: &dyn Environment, rhs: &dyn Environment) -> bool {
-    ptr::eq(
-        lhs as *const dyn Environment as *const u8,
-        rhs as *const dyn Environment as *const u8,
-    )
+    fn get(&self, key: &str) -> Result<Value, EvalError>;
 }
 
 impl PartialEq for dyn Environment {
@@ -90,19 +82,19 @@ impl Eq for dyn Environment {}
 /// An environment for call-by-value.
 pub struct CallByValue {
     /// The stored key-value pairs.
-    storage: HashMap<String, RefCell<Option<EitherValue>>>,
+    storage: HashMap<String, RefCell<Option<Rc<EitherValue>>>>,
 }
 
 impl CallByValue {
     /// Create a copy of the internal storage, promiting any weak references
     /// along the way.
-    fn clone_storage(&self) -> HashMap<String, RefCell<Option<EitherValue>>> {
+    fn clone_storage(&self) -> HashMap<String, RefCell<Option<Rc<EitherValue>>>> {
         self.storage
             .iter()
             .map(|(key, value)| {
                 (
                     key.clone(),
-                    RefCell::new(value.borrow().as_ref().map(|either| either.as_strong())),
+                    RefCell::new(value.borrow().as_ref().map(strengthen)),
                 )
             })
             .collect()
@@ -127,7 +119,7 @@ impl Environment for CallByValue {
             // no key found
             .ok_or_else(|| EvalError::Unbound(key.into()))?
             .borrow()
-            .clone()
+            .as_ref()
             // key found, but not evaluated
             .ok_or_else(|| EvalError::ForwardReference(key.into()))?
             .into())
@@ -135,14 +127,14 @@ impl Environment for CallByValue {
 
     fn with(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
         context: Rc<dyn Environment>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
         let mut new_storage = self.clone_storage();
         for (key, body) in bindings {
             let value = evaluate_help(body, context.clone())?;
 
-            new_storage.insert(key.clone(), RefCell::new(Some(value.into())));
+            new_storage.insert(key.clone(), RefCell::new(Some(Rc::new(value.into()))));
         }
         Ok(Rc::new(CallByValue {
             storage: new_storage,
@@ -151,10 +143,10 @@ impl Environment for CallByValue {
 
     fn with_recursive(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
         let mut new_storage = self.clone_storage();
-        let collected_bindings: Vec<(&String, &Ast)> = bindings.collect();
+        let collected_bindings: Vec<(&String, &Rc<Ast>)> = bindings.collect();
         for (key, _) in collected_bindings.iter() {
             // start by storing a dummy value for this key before we lose
             // mutability
@@ -164,9 +156,9 @@ impl Environment for CallByValue {
             storage: new_storage,
         });
         for (key, body) in collected_bindings {
-            let either: EitherValue = evaluate_help(body, new_env.clone())?.into();
+            let either = Rc::new(evaluate_help(body, new_env.clone())?.into());
             // now evaluate the body using our new environment
-            new_env.storage[key].replace(Some(either.demote_in(new_env.clone())));
+            new_env.storage[key].replace(Some(demote_in(&either, new_env.as_ref())));
         }
         Ok(new_env)
     }
@@ -195,7 +187,7 @@ impl Debug for CallByValue {
 /// The type of a value in call-by-name. Environments are wrapped in an
 /// `Option`. if the option is `None`, then we will use ourselves as an
 /// evaluator.
-type NameValue = (Option<Rc<dyn Environment>>, Ast);
+type NameValue = (Option<Rc<dyn Environment>>, Rc<Ast>);
 
 #[derive(Clone, Debug)]
 /// A call-by-name environment.
@@ -261,7 +253,7 @@ impl Environment for CallByName {
 
     fn with(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
         context: Rc<dyn Environment>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
         let mut new_storage = self.clone_storage();
@@ -276,11 +268,11 @@ impl Environment for CallByName {
 
     fn with_recursive(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
         // collect so we can iterate twice
         let mut new_storage = self.clone_storage();
-        let collected_bindings: Vec<(&String, &Ast)> = bindings.collect();
+        let collected_bindings: Vec<(&String, &Rc<Ast>)> = bindings.collect();
 
         for (key, _) in collected_bindings.iter() {
             new_storage.insert(key.to_string(), RefCell::new(None));
@@ -312,7 +304,7 @@ impl BuildEnvironment for CallByName {
 enum NeedValue {
     /// The value has not yet been evaluated. Will be `None` if it must be
     /// evaluated with the environment it is stored in.
-    Ast(Option<Rc<dyn Environment>>, Ast),
+    Ast(Option<Rc<dyn Environment>>, Rc<Ast>),
     /// The value has been evaluated.
     Value(Value),
 }
@@ -368,7 +360,7 @@ impl Environment for CallByNeed {
 
     fn with(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
         context: Rc<dyn Environment>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
         let mut new_storage = self.clone_storage();
@@ -383,11 +375,11 @@ impl Environment for CallByNeed {
 
     fn with_recursive(
         &self,
-        bindings: &mut dyn Iterator<Item = (&String, &Ast)>,
+        bindings: &mut dyn Iterator<Item = (&String, &Rc<Ast>)>,
     ) -> Result<Rc<dyn Environment>, EvalError> {
         // collect so we can iterate twice
         let mut new_storage = self.clone_storage();
-        let collected_bindings: Vec<(&String, &Ast)> = bindings.collect();
+        let collected_bindings: Vec<(&String, &Rc<Ast>)> = bindings.collect();
 
         for (key, _) in collected_bindings.iter() {
             new_storage.insert(key.to_string(), RefCell::new(None));
