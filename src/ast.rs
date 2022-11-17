@@ -173,7 +173,7 @@ impl Display for Ast {
             Ast::Map { params, body } => {
                 write!(f, "map ")?;
                 write_list(params, ", ", f)?;
-                write!(f, " to {}", body)
+                write!(f, " to {body}")
             }
             Ast::Primitive(fun) => write!(f, "{fun}"),
         }
@@ -249,7 +249,7 @@ pub fn write_list<T: Display>(
         _ => {
             write!(f, "{}", list[0])?;
             for elem in &list[1..] {
-                write!(f, "{sep}{}", elem)?;
+                write!(f, "{sep}{elem}")?;
             }
 
             Ok(())

@@ -182,7 +182,7 @@ impl<I: Iterator<Item = char>> Iterator for TokenStream<I> {
                     if !(c.is_numeric()) {
                         break;
                     }
-                    s.push(self.source.next().unwrap())
+                    s.push(self.source.next().unwrap());
                 }
                 Token::Number(s.parse().unwrap())
             }

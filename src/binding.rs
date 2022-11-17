@@ -147,10 +147,10 @@ impl Environment for CallByValue {
     ) -> Result<Rc<dyn Environment>, EvalError> {
         let mut new_storage = self.clone_storage();
         let collected_bindings: Vec<(&String, &Rc<Ast>)> = bindings.collect();
-        for (key, _) in collected_bindings.iter() {
+        for (key, _) in &collected_bindings {
             // start by storing a dummy value for this key before we lose
             // mutability
-            new_storage.insert(key.to_string(), RefCell::new(None));
+            new_storage.insert((*key).to_string(), RefCell::new(None));
         }
         let new_env = Rc::new(CallByValue {
             storage: new_storage,
@@ -175,8 +175,8 @@ impl BuildEnvironment for CallByValue {
 impl Debug for CallByValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "CallByValue {{ ")?;
-        for (key, value) in self.storage.iter() {
-            write!(f, "{key:?}: {:?}, ", value)?;
+        for (key, value) in &self.storage {
+            write!(f, "{key:?}: {value:?}, ")?;
         }
         write!(f, "}}")
     }
@@ -274,8 +274,8 @@ impl Environment for CallByName {
         let mut new_storage = self.clone_storage();
         let collected_bindings: Vec<(&String, &Rc<Ast>)> = bindings.collect();
 
-        for (key, _) in collected_bindings.iter() {
-            new_storage.insert(key.to_string(), RefCell::new(None));
+        for (key, _) in &collected_bindings {
+            new_storage.insert((*key).to_string(), RefCell::new(None));
         }
 
         let new_env = CallByName::with_storage(new_storage);
@@ -369,8 +369,8 @@ impl Environment for CallByNeed {
         let mut new_storage = self.clone_storage();
         let collected_bindings: Vec<(&String, &Rc<Ast>)> = bindings.collect();
 
-        for (key, _) in collected_bindings.iter() {
-            new_storage.insert(key.to_string(), RefCell::new(None));
+        for (key, _) in &collected_bindings {
+            new_storage.insert((*key).to_string(), RefCell::new(None));
         }
 
         let new_env = CallByNeed::with_storage(new_storage);

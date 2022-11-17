@@ -83,8 +83,8 @@ pub fn demote_in(ev: &Rc<EitherValue>, env: &dyn Environment) -> Rc<EitherValue>
             body,
         } => {
             if std::ptr::eq(
-                environment.as_ref() as *const dyn Environment as *const u8,
-                env as *const dyn Environment as *const u8,
+                (environment.as_ref() as *const dyn Environment).cast::<u8>(),
+                (env as *const dyn Environment).cast::<u8>(),
             ) {
                 Rc::new(EitherValue::WeakClosure {
                     params: params.clone(),
@@ -148,8 +148,8 @@ impl EitherValue {
                 environment,
                 body: _,
             } => std::ptr::eq(
-                environment.as_ref() as *const dyn Environment as *const u8,
-                env as *const dyn Environment as *const u8,
+                (environment.as_ref() as *const dyn Environment).cast::<u8>(),
+                (env as *const dyn Environment).cast::<u8>(),
             ),
             _ => false,
         }

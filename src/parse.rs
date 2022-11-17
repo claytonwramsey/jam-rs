@@ -39,7 +39,7 @@ pub fn parse<I: Iterator<Item = char>>(tokens: TokenStream<I>) -> ParseResult {
     let mut peeker = tokens.peekable();
     let result = parse_exp(&mut peeker)?;
     let n = peeker.next();
-    if n != None {
+    if n.is_some() {
         return Err(ParseError::SpareTokens);
     }
 
@@ -62,19 +62,20 @@ fn parse_exp<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
     let mut exp = parse_term(tokens, token)?;
     loop {
         // find any binary operations
-        let operator = match tokens.peek() {
-            Some(Ok(Token::Plus)) => BinOp::Plus,
-            Some(Ok(Token::Minus)) => BinOp::Minus,
-            Some(Ok(Token::Slash)) => BinOp::Div,
-            Some(Ok(Token::Star)) => BinOp::Mul,
-            Some(Ok(Token::And)) => BinOp::And,
-            Some(Ok(Token::Or)) => BinOp::Or,
-            Some(Ok(Token::Eq)) => BinOp::Eq,
-            Some(Ok(Token::Neq)) => BinOp::Neq,
-            Some(Ok(Token::Gt)) => BinOp::Gt,
-            Some(Ok(Token::Geq)) => BinOp::Geq,
-            Some(Ok(Token::Lt)) => BinOp::Lt,
-            Some(Ok(Token::Leq)) => BinOp::Leq,
+        let Some(Ok(op_tok)) = tokens.peek() else { break; };
+        let operator = match op_tok {
+            Token::Plus => BinOp::Plus,
+            Token::Minus => BinOp::Minus,
+            Token::Slash => BinOp::Div,
+            Token::Star => BinOp::Mul,
+            Token::And => BinOp::And,
+            Token::Or => BinOp::Or,
+            Token::Eq => BinOp::Eq,
+            Token::Neq => BinOp::Neq,
+            Token::Gt => BinOp::Gt,
+            Token::Geq => BinOp::Geq,
+            Token::Lt => BinOp::Lt,
+            Token::Leq => BinOp::Leq,
             _ => break,
         };
         tokens.next(); // consume the peeked token
@@ -91,9 +92,9 @@ fn parse_exp<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
 /// Parse an if statement. Assumes the `if` keyword has already been consumed.
 fn parse_if<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResult {
     let condition = Rc::new(parse_exp(tokens)?);
-    require_token(tokens.next(), Token::KeyWord(KeyWord::Then))?;
+    require_token(tokens.next(), &Token::KeyWord(KeyWord::Then))?;
     let consequence = Rc::new(parse_exp(tokens)?);
-    require_token(tokens.next(), Token::KeyWord(KeyWord::Else))?;
+    require_token(tokens.next(), &Token::KeyWord(KeyWord::Else))?;
     let alternate = Rc::new(parse_exp(tokens)?);
 
     Ok(Ast::If {
@@ -110,10 +111,10 @@ fn parse_let<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
     let mut t = tokens.next();
     while t != Some(Ok(Token::KeyWord(KeyWord::In))) {
         let id = require_id(t.clone())?;
-        require_token(tokens.next().clone(), Token::Walrus)?;
+        require_token(tokens.next().clone(), &Token::Walrus)?;
         let rhs = parse_exp(tokens)?;
         defs.push((id, Rc::new(rhs)));
-        require_token(tokens.next(), Token::Semicolon)?;
+        require_token(tokens.next(), &Token::Semicolon)?;
         t = tokens.next();
     }
 
@@ -213,7 +214,7 @@ fn parse_factor<I: Iterator<Item = char>>(
     match last_token {
         Token::LeftParenthesis => {
             let exp = parse_exp(tokens)?;
-            require_token(tokens.next(), Token::RightParenthesis)?;
+            require_token(tokens.next(), &Token::RightParenthesis)?;
             Ok(exp)
         }
         Token::Id(s) => Ok(match s.as_str() {
@@ -274,9 +275,9 @@ fn require_id(token: Option<TokenResult>) -> Result<String, ParseError> {
 
 /// Require that the token be equal to the expected token. Returns an `Err` if
 /// this is not the case.
-fn require_token(token: Option<TokenResult>, required: Token) -> Result<(), ParseError> {
+fn require_token(token: Option<TokenResult>, required: &Token) -> Result<(), ParseError> {
     let t = token.ok_or(ParseError::ReachedEnd)??;
-    if required == t {
+    if &t == required {
         Ok(())
     } else {
         Err(ParseError::UnexpectedToken {
@@ -353,7 +354,7 @@ mod tests {
                     rhs: Rc::new(Ast::Variable("a".into())),
                 }),
             }),
-        )
+        );
     }
 
     fn parse_helper(input: &str, expected: ParseResult) {

@@ -72,15 +72,15 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
                     for param in params {
                         args.push(evaluate_help(param, environment.clone())?);
                     }
-                    eval_primitive(f, args)?
+                    eval_primitive(f, &args)?
                 }
                 _ => return Err(EvalError::NotAFunction(resolved_rator)),
             }
         }
         Ast::BinOp { rator, lhs, rhs } => {
-            let lval = evaluate_help(lhs, environment.clone())?;
-            let rval = evaluate_help(rhs, environment)?;
-            eval_binop(*rator, lval, rval)?
+            let left_val = evaluate_help(lhs, environment.clone())?;
+            let right_val = evaluate_help(rhs, environment)?;
+            eval_binop(*rator, left_val, right_val)?
         }
         Ast::UnOp { rator, operand } => {
             let arg = evaluate_help(operand, environment)?;
@@ -124,13 +124,16 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
 
 /// Evaluate a primitive function call. `args` is the values of all the
 /// arguments to the function.
-fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
-    let require_param_len = |n| match args.len() == n {
-        true => Ok(()),
-        false => Err(EvalError::WrongArgCount {
-            expected: n,
-            actual: args.len(),
-        }),
+fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
+    let require_param_len = |n| {
+        if args.len() == n {
+            Ok(())
+        } else {
+            Err(EvalError::WrongArgCount {
+                expected: n,
+                actual: args.len(),
+            })
+        }
     };
     Ok(match f {
         PrimFun::IsNumber => {
@@ -165,11 +168,11 @@ fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
         }
         PrimFun::Cons => {
             require_param_len(2)?;
-            match args[1].to_owned() {
+            match args[1].clone() {
                 Value::List(mut l) => {
                     let mut new_list = LinkedList::new();
                     new_list.append(&mut l);
-                    new_list.push_front(args[0].to_owned());
+                    new_list.push_front(args[0].clone());
                     Value::List(new_list)
                 }
                 a => return Err(EvalError::WrongPrimArg(f, a)),
@@ -177,7 +180,7 @@ fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
         }
         PrimFun::First => {
             require_param_len(1)?;
-            match args[0].to_owned() {
+            match args[0].clone() {
                 Value::List(l) => l
                     .front()
                     .ok_or_else(|| EvalError::WrongPrimArg(f, args[0].clone()))?
@@ -187,21 +190,21 @@ fn eval_primitive(f: PrimFun, args: Vec<Value>) -> EvalResult {
         }
         PrimFun::Rest => {
             require_param_len(1)?;
-            match args[0].to_owned() {
+            match args[0].clone() {
                 Value::List(mut l) => {
                     if l.is_empty() {
                         return Err(EvalError::WrongPrimArg(f, args[0].clone()));
-                    } else {
-                        l.pop_front();
-                        Value::List(l)
                     }
+
+                    l.pop_front();
+                    Value::List(l)
                 }
                 a => return Err(EvalError::WrongPrimArg(f, a)),
             }
         }
         PrimFun::Arity => {
             require_param_len(1)?;
-            match args[0].to_owned() {
+            match args[0].clone() {
                 Value::Primitive(p) => Value::Int(match p {
                     PrimFun::Cons => 2,
                     _ => 1,
@@ -274,8 +277,7 @@ fn eval_binop(op: BinOp, lhs: Value, rhs: Value) -> EvalResult {
 fn require_binop_int(lhs: Value, rhs: Value, op: BinOp) -> Result<(i32, i32), EvalError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok((a, b)),
-        (val, Value::Int(_)) => Err(EvalError::WrongBinOpArg(op, val)),
-        (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
+        (val, Value::Int(_)) | (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
     }
 }
 
@@ -284,8 +286,7 @@ fn require_binop_int(lhs: Value, rhs: Value, op: BinOp) -> Result<(i32, i32), Ev
 fn require_binop_bool(lhs: Value, rhs: Value, op: BinOp) -> Result<(bool, bool), EvalError> {
     match (lhs, rhs) {
         (Value::Bool(a), Value::Bool(b)) => Ok((a, b)),
-        (val, Value::Bool(_)) => Err(EvalError::WrongBinOpArg(op, val)),
-        (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
+        (val, Value::Bool(_)) | (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
     }
 }
 
@@ -302,34 +303,34 @@ mod tests {
     /// Helper function for testing one evaluation. Will fail if the given
     /// string fails to parse, or the evaluated value does not match
     /// expectations.
-    fn test_eval_helper<E: 'static + BuildEnvironment>(s: &str, val: EvalResult) {
+    fn test_eval_helper<E: 'static + BuildEnvironment>(s: &str, val: &EvalResult) {
         assert_eq!(
-            evaluate::<E>(&parse(TokenStream::new(s.chars())).unwrap()),
+            &evaluate::<E>(&parse(TokenStream::new(s.chars())).unwrap()),
             val
         );
     }
 
     #[test]
     fn test_evalute_int_constant() {
-        test_eval_helper::<CallByValue>("123", Ok(Value::Int(123)));
-        test_eval_helper::<CallByName>("123", Ok(Value::Int(123)));
-        test_eval_helper::<CallByNeed>("123", Ok(Value::Int(123)));
+        test_eval_helper::<CallByValue>("123", &Ok(Value::Int(123)));
+        test_eval_helper::<CallByName>("123", &Ok(Value::Int(123)));
+        test_eval_helper::<CallByNeed>("123", &Ok(Value::Int(123)));
     }
 
     #[test]
     fn test_evaluate_let() {
         let s = "let a := 2; in a + a";
-        test_eval_helper::<CallByValue>(s, Ok(Value::Int(4)));
-        test_eval_helper::<CallByName>(s, Ok(Value::Int(4)));
-        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(4)));
+        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(4)));
+        test_eval_helper::<CallByName>(s, &Ok(Value::Int(4)));
+        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(4)));
     }
 
     #[test]
     fn test_def_map_in_let() {
         let s = "let inc := map x to x + 1; in inc(4)";
-        test_eval_helper::<CallByValue>(s, Ok(Value::Int(5)));
-        test_eval_helper::<CallByName>(s, Ok(Value::Int(5)));
-        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(5)));
+        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(5)));
+        test_eval_helper::<CallByName>(s, &Ok(Value::Int(5)));
+        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(5)));
     }
 
     #[test]
@@ -345,9 +346,9 @@ mod tests {
             in 
                 f(f(f(cons(cons(1, empty), empty))))
             "#;
-        test_eval_helper::<CallByValue>(s, Ok(Value::Int(1)));
-        test_eval_helper::<CallByName>(s, Ok(Value::Int(1)));
-        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(1)));
+        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(1)));
+        test_eval_helper::<CallByName>(s, &Ok(Value::Int(1)));
+        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(1)));
     }
 
     #[test]
@@ -368,8 +369,8 @@ mod tests {
             in 
                 (Y(fact))(6)
         "#;
-        test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
-        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
+        test_eval_helper::<CallByName>(s, &Ok(Value::Int(720)));
+        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(720)));
     }
 
     #[test]
@@ -384,9 +385,9 @@ mod tests {
             in
                 fact(6)
         "#;
-        test_eval_helper::<CallByValue>(s, Ok(Value::Int(720)));
-        test_eval_helper::<CallByName>(s, Ok(Value::Int(720)));
-        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(720)));
+        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(720)));
+        test_eval_helper::<CallByName>(s, &Ok(Value::Int(720)));
+        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(720)));
     }
 
     #[test]
@@ -400,9 +401,9 @@ mod tests {
             in
                 fib(20)
         "#;
-        test_eval_helper::<CallByValue>(s, Ok(Value::Int(6765)));
-        test_eval_helper::<CallByName>(s, Ok(Value::Int(6765)));
-        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(6765)));
+        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(6765)));
+        test_eval_helper::<CallByName>(s, &Ok(Value::Int(6765)));
+        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(6765)));
     }
 
     #[test]
@@ -418,8 +419,8 @@ mod tests {
             in 
                 fib(10)
         "#;
-        test_eval_helper::<CallByValue>(s, Ok(Value::Int(55)));
-        test_eval_helper::<CallByName>(s, Ok(Value::Int(55)));
-        test_eval_helper::<CallByNeed>(s, Ok(Value::Int(55)));
+        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(55)));
+        test_eval_helper::<CallByName>(s, &Ok(Value::Int(55)));
+        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(55)));
     }
 }
