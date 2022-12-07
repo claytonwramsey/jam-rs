@@ -35,7 +35,7 @@ pub type ParseResult = Result<Ast, ParseError>;
 #[allow(unused)]
 /// Parse a stream of tokens, and generate an AST from it. Consumes the token
 /// stream.
-pub fn parse<I: Iterator<Item = char>>(tokens: TokenStream<I>) -> ParseResult {
+pub fn parse(tokens: TokenStream<impl Iterator<Item = char>>) -> ParseResult {
     let mut peeker = tokens.peekable();
     let result = parse_exp(&mut peeker)?;
     let n = peeker.next();
@@ -47,7 +47,7 @@ pub fn parse<I: Iterator<Item = char>>(tokens: TokenStream<I>) -> ParseResult {
 }
 
 /// Parse an expression. Consumes all tokens associated with the expression.
-fn parse_exp<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResult {
+fn parse_exp(tokens: &mut TokenPeeker<impl Iterator<Item = char>>) -> ParseResult {
     let token = tokens.next().ok_or(ParseError::ReachedEnd)??;
     if let Token::KeyWord(kw) = token {
         match kw {
@@ -90,7 +90,7 @@ fn parse_exp<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
 }
 
 /// Parse an if statement. Assumes the `if` keyword has already been consumed.
-fn parse_if<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResult {
+fn parse_if(tokens: &mut TokenPeeker<impl Iterator<Item = char>>) -> ParseResult {
     let condition = Rc::new(parse_exp(tokens)?);
     require_token(tokens.next(), &Token::KeyWord(KeyWord::Then))?;
     let consequence = Rc::new(parse_exp(tokens)?);
@@ -106,7 +106,7 @@ fn parse_if<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResul
 
 /// Parse a let statement. Assumes that the `let` keyword has already been
 /// consumed.
-fn parse_let<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResult {
+fn parse_let(tokens: &mut TokenPeeker<impl Iterator<Item = char>>) -> ParseResult {
     let mut defs = Vec::new();
     let mut t = tokens.next();
     while t != Some(Ok(Token::KeyWord(KeyWord::In))) {
@@ -126,7 +126,7 @@ fn parse_let<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
 
 /// Parse a map statement. Assumes that the `map` keyword has already been
 /// consumed.
-fn parse_map<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResult {
+fn parse_map(tokens: &mut TokenPeeker<impl Iterator<Item = char>>) -> ParseResult {
     let mut params = Vec::new();
     let mut t = tokens.next();
     if t == Some(Ok(Token::KeyWord(KeyWord::To))) {
@@ -157,8 +157,8 @@ fn parse_map<I: Iterator<Item = char>>(tokens: &mut TokenPeeker<I>) -> ParseResu
 
 /// Parse a term, which may be some number of unary operators followed by a
 /// constant or variable.
-fn parse_term<I: Iterator<Item = char>>(
-    tokens: &mut TokenPeeker<I>,
+fn parse_term(
+    tokens: &mut TokenPeeker<impl Iterator<Item = char>>,
     last_token: Token,
 ) -> ParseResult {
     match last_token {
@@ -207,8 +207,8 @@ fn parse_term<I: Iterator<Item = char>>(
 
 /// Parse the head of a function application. Takes in the last token that was
 /// used to make its requisite term, plus the remaining terms.
-fn parse_factor<I: Iterator<Item = char>>(
-    tokens: &mut TokenPeeker<I>,
+fn parse_factor(
+    tokens: &mut TokenPeeker<impl Iterator<Item = char>>,
     last_token: Token,
 ) -> ParseResult {
     match last_token {
@@ -295,14 +295,14 @@ mod tests {
 
     #[test]
     fn test_parse_constant() {
-        parse_helper("12345", Ok(Ast::Int(12345)));
+        parse_helper("12345", &Ok(Ast::Int(12345)));
     }
 
     #[test]
     fn test_parse_unary_negation() {
         parse_helper(
             "-123",
-            Ok(Ast::UnOp {
+            &Ok(Ast::UnOp {
                 rator: UnOp::Neg,
                 operand: Rc::new(Ast::Int(123)),
             }),
@@ -313,7 +313,7 @@ mod tests {
     fn test_parse_application() {
         parse_helper(
             "f(x) + (x*12)",
-            Ok(Ast::BinOp {
+            &Ok(Ast::BinOp {
                 rator: BinOp::Plus,
                 lhs: Rc::new(Ast::App {
                     rator: Rc::new(Ast::Variable("f".into())),
@@ -332,7 +332,7 @@ mod tests {
     fn test_parse_lists() {
         parse_helper(
             "first(cons(1, empty))",
-            Ok(Ast::App {
+            &Ok(Ast::App {
                 rator: Rc::new(Ast::Primitive(PrimFun::First)),
                 params: vec![Rc::new(Ast::App {
                     rator: Rc::new(Ast::Primitive(PrimFun::Cons)),
@@ -346,7 +346,7 @@ mod tests {
     fn test_parse_let() {
         parse_helper(
             "let a := 3; in a + a",
-            Ok(Ast::Let {
+            &Ok(Ast::Let {
                 defs: vec![("a".into(), Rc::new(Ast::Int(3)))],
                 body: Rc::new(Ast::BinOp {
                     rator: BinOp::Plus,
@@ -357,8 +357,8 @@ mod tests {
         );
     }
 
-    fn parse_helper(input: &str, expected: ParseResult) {
+    fn parse_helper(input: &str, expected: &ParseResult) {
         let ast = parse(TokenStream::new(input.chars()));
-        assert_eq!(ast, expected);
+        assert_eq!(&ast, expected);
     }
 }
