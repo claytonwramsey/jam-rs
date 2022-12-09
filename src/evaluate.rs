@@ -432,4 +432,18 @@ mod tests {
         test_eval_enver::<CallByName>(s, &Ok(Value::Int(55)));
         test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(55)));
     }
+
+    #[test]
+    fn equal_closures() {
+        let s = r#"
+            let 
+                c1 := map l to l + 1;
+                c2 := map l to l + 1;
+            in 
+                c1 = c2
+        "#;
+        test_eval_enver::<CallByValue>(s, &Ok(Value::Bool(true)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Bool(true)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Bool(true)));
+    }
 }
