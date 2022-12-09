@@ -4,7 +4,6 @@
 
 use std::{
     borrow::Borrow,
-    collections::LinkedList,
     fmt::{self, Display},
     rc::{Rc, Weak},
 };
@@ -14,19 +13,19 @@ use crate::{
     binding::Environment,
 };
 
-#[derive(Clone, Debug, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 /// The return value of a Jam program.
-pub enum Value {
+pub enum Value<E: Environment> {
     /// A signed integer.
-    Int(i32),
+    Int(i64),
     /// A boolean.
     Bool(bool),
     /// A list.
-    List(LinkedList<Value>),
+    List(Vec<Value<E>>),
     /// A function, with a body which has not been evaluated yet.
     Closure {
         params: Vec<String>,
-        environment: Rc<dyn Environment>,
+        environment: Rc<E>,
         body: Rc<Ast>,
     },
     /// A primitive function.
@@ -34,25 +33,26 @@ pub enum Value {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::module_name_repetitions)]
 /// A Jam value which can potentially contain weak references to its definition
 /// environments.
-pub enum EitherValue {
+pub enum EitherValue<E: Environment> {
     /// A signed integer.
-    Int(i32),
+    Int(i64),
     /// A boolean.
     Bool(bool),
     /// A list.
-    List(LinkedList<Rc<EitherValue>>),
+    List(Vec<Rc<EitherValue<E>>>),
     /// A closure with strong references to its definition environment.
     StrongClosure {
         params: Vec<String>,
-        environment: Rc<dyn Environment>,
+        environment: Rc<E>,
         body: Rc<Ast>,
     },
     /// A closure with weak references to its definition environment.
     WeakClosure {
         params: Vec<String>,
-        environment: Weak<dyn Environment>,
+        environment: Weak<E>,
         body: Rc<Ast>,
     },
     /// A primitive function.
@@ -65,7 +65,7 @@ pub enum EitherValue {
 /// # Panics
 ///
 /// Will panic if the environment requested for promotion no longer exists.
-pub fn demote_in(ev: &Rc<EitherValue>, env: &dyn Environment) -> Rc<EitherValue> {
+pub fn demote_in<E: Environment>(ev: &Rc<EitherValue<E>>, env: &E) -> Rc<EitherValue<E>> {
     match ev.borrow() {
         EitherValue::List(l) => {
             // don't bother demoting anything if we don't need to
@@ -82,10 +82,7 @@ pub fn demote_in(ev: &Rc<EitherValue>, env: &dyn Environment) -> Rc<EitherValue>
             environment,
             body,
         } => {
-            if std::ptr::eq(
-                (environment.as_ref() as *const dyn Environment).cast::<u8>(),
-                (env as *const dyn Environment).cast::<u8>(),
-            ) {
+            if std::ptr::eq(environment.as_ref() as *const E, env as *const E) {
                 Rc::new(EitherValue::WeakClosure {
                     params: params.clone(),
                     environment: Rc::downgrade(environment),
@@ -101,7 +98,7 @@ pub fn demote_in(ev: &Rc<EitherValue>, env: &dyn Environment) -> Rc<EitherValue>
 
 /// Convert this value to one which has no `WeakClosure`s. Will have no effect
 /// if there were no weak closures to begin with, yielding the original Rc.
-pub fn strengthen(ev: &Rc<EitherValue>) -> Rc<EitherValue> {
+pub fn strengthen<E: Environment>(ev: &Rc<EitherValue<E>>) -> Rc<EitherValue<E>> {
     match ev.borrow() {
         EitherValue::List(l) => {
             if l.iter().all(|val| val.is_strong()) {
@@ -124,7 +121,7 @@ pub fn strengthen(ev: &Rc<EitherValue>) -> Rc<EitherValue> {
     }
 }
 
-impl EitherValue {
+impl<E: Environment> EitherValue<E> {
     /// Determine whether all closures in this either value are strong. If
     /// there is one weak closure, this value is not strong.
     fn is_strong(&self) -> bool {
@@ -140,31 +137,32 @@ impl EitherValue {
     }
 
     /// Determine whether this value strongly refers to a given environment.
-    fn strongly_refers_to(&self, env: &dyn Environment) -> bool {
+    fn strongly_refers_to(&self, env: &E) -> bool {
         match self {
             EitherValue::List(l) => l.iter().any(|val| val.strongly_refers_to(env)),
             EitherValue::StrongClosure {
                 params: _,
                 environment,
                 body: _,
-            } => std::ptr::eq(
-                (environment.as_ref() as *const dyn Environment).cast::<u8>(),
-                (env as *const dyn Environment).cast::<u8>(),
-            ),
+            } => std::ptr::eq(environment.as_ref() as *const E, env as *const E),
             _ => false,
         }
     }
 }
 
-impl From<&EitherValue> for Value {
+impl<E, T> From<T> for Value<E>
+where
+    E: Environment,
+    T: Borrow<EitherValue<E>>,
+{
     /// Convert an `EitherValue` into a strong `Value`, upgrading any
     /// references along the way.
     ///
     /// # Panics
     ///
     /// Will panic if a weak reference to an environment has expired.
-    fn from(ev: &EitherValue) -> Self {
-        match ev {
+    fn from(ev: T) -> Self {
+        match ev.borrow() {
             EitherValue::Int(i) => Value::Int(*i),
             EitherValue::Bool(b) => Value::Bool(*b),
             EitherValue::List(l) => {
@@ -193,25 +191,14 @@ impl From<&EitherValue> for Value {
     }
 }
 
-impl<T> From<T> for Value
+impl<T, E> From<T> for EitherValue<E>
 where
-    T: AsRef<EitherValue>,
+    E: Environment,
+    T: Borrow<Value<E>>,
 {
-    fn from(r: T) -> Self {
-        r.as_ref().into()
-    }
-}
-
-impl From<EitherValue> for Value {
-    fn from(ev: EitherValue) -> Self {
-        (&ev).into()
-    }
-}
-
-impl From<&Value> for EitherValue {
     /// Construct an `EitherValue`, using a strong reference for each closure.
-    fn from(value: &Value) -> Self {
-        match value {
+    fn from(value: T) -> Self {
+        match value.borrow() {
             Value::Int(i) => EitherValue::Int(*i),
             Value::Bool(b) => EitherValue::Bool(*b),
             Value::List(l) => {
@@ -231,45 +218,68 @@ impl From<&Value> for EitherValue {
     }
 }
 
-impl From<Value> for EitherValue {
-    fn from(value: Value) -> Self {
-        (&value).into()
-    }
-}
-
-impl PartialEq for Value {
+impl<E: Environment> PartialEq for EitherValue<E> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Int(l0), Self::Int(r0)) => l0 == r0,
             (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
             (Self::List(l0), Self::List(r0)) => l0 == r0,
             (
-                Self::Closure {
+                Self::StrongClosure {
                     params: l_params,
                     environment: l_environment,
                     body: l_body,
                 },
-                Self::Closure {
+                Self::StrongClosure {
                     params: r_params,
                     environment: r_environment,
                     body: r_body,
                 },
             ) => l_params == r_params && l_environment == r_environment && l_body == r_body,
+            (
+                Self::WeakClosure {
+                    params: l_params,
+                    environment: l_environment,
+                    body: l_body,
+                },
+                Self::WeakClosure {
+                    params: r_params,
+                    environment: r_environment,
+                    body: r_body,
+                },
+            ) => {
+                l_params == r_params
+                    && l_environment.upgrade().unwrap() == r_environment.upgrade().unwrap()
+                    && l_body == r_body
+            }
             (Self::Primitive(l0), Self::Primitive(r0)) => l0 == r0,
             _ => false,
         }
     }
 }
 
-impl Display for Value {
+impl<E: Environment> Eq for EitherValue<E> {}
+
+impl<E: Environment> Display for Value<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Int(i) => write!(f, "{i}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::List(l) => {
                 write!(f, "(")?;
-                let vals: Vec<Value> = l.iter().cloned().collect();
-                write_list(&vals, " ", f)?;
+                let mut iter = l.iter().rev();
+                match (iter.next(), iter.next()) {
+                    (None, _) => (),
+                    (Some(v), None) => {
+                        write!(f, "{v}")?;
+                    }
+                    (Some(v1), Some(v2)) => {
+                        write!(f, "{v1}, {v2}")?;
+                        for value in iter {
+                            write!(f, ", {value}")?;
+                        }
+                    }
+                };
                 write!(f, ")")
             }
             Value::Closure {
@@ -282,6 +292,26 @@ impl Display for Value {
                 write!(f, "-> {body}")
             }
             Value::Primitive(fun) => write!(f, "{fun}"),
+        }
+    }
+}
+
+impl<E: Environment> Clone for Value<E> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Int(arg0) => Self::Int(*arg0),
+            Self::Bool(arg0) => Self::Bool(*arg0),
+            Self::List(arg0) => Self::List(arg0.clone()),
+            Self::Closure {
+                params,
+                environment,
+                body,
+            } => Self::Closure {
+                params: params.clone(),
+                environment: environment.clone(),
+                body: body.clone(),
+            },
+            Self::Primitive(arg0) => Self::Primitive(*arg0),
         }
     }
 }

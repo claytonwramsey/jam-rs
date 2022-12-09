@@ -1,4 +1,4 @@
-use std::{collections::LinkedList, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     ast::{Ast, BinOp, PrimFun, UnOp},
@@ -8,21 +8,21 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// The types of errors which can occur during a Jam interpretation.
-pub enum EvalError {
+pub enum EvalError<E: Environment> {
     /// A variable was unbound and occurred free.
     Unbound(String),
     /// The program attempted to call something which was not a function.
-    NotAFunction(Value),
+    NotAFunction(Value<E>),
     /// The program called a function with the wrong number of arguments.
     WrongArgCount { expected: usize, actual: usize },
     /// The wrong type was given as a parameter to a primitive function.
-    WrongPrimArg(PrimFun, Value),
+    WrongPrimArg(PrimFun, Value<E>),
     /// The wrong type was given to a binary operator.
-    WrongBinOpArg(BinOp, Value),
+    WrongBinOpArg(BinOp, Value<E>),
     /// The wrong value was given to a unary operator.
-    WrongUnOpArg(UnOp, Value),
+    WrongUnOpArg(UnOp, Value<E>),
     /// The condition to an if statement was not a bool.
-    TestNonBool(Value),
+    TestNonBool(Value<E>),
     /// A forward reference was created in a let statement.
     ForwardReference(String),
     /// Divide by zero was attempted.
@@ -30,27 +30,27 @@ pub enum EvalError {
 }
 
 /// The result of an evaluation process.
-pub type EvalResult = Result<Value, EvalError>;
+pub type EvalResult<E> = Result<Value<E>, EvalError<E>>;
 
 #[allow(unused)]
 /// Evaluate a Jam expression. Returns the resulting value on success, and an
 /// `Err` if the expression is incorrect in some way (typically due to type
 /// errors).
-pub fn evaluate<E: 'static + BuildEnvironment>(ast: &Ast) -> EvalResult {
-    evaluate_help(ast, E::build())
+pub fn evaluate<E: Environment + BuildEnvironment>(ast: &Ast) -> EvalResult<E> {
+    eval_env(ast, E::build())
 }
 
 /// A helper function to evaluate a Jam expresion given a pre-existing
 /// environment.
-pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult {
+pub fn eval_env<E: Environment>(ast: &Ast, environment: Rc<E>) -> EvalResult<E> {
     let val = match ast {
-        Ast::Int(n) => Value::Int(*n as i32),
+        Ast::Int(n) => Value::Int(i64::from(*n)),
         Ast::Bool(b) => Value::Bool(*b),
-        Ast::Empty => Value::List(LinkedList::new()),
+        Ast::Empty => Value::List(Vec::new()),
         Ast::Variable(v) => environment.get(v)?,
         Ast::Primitive(f) => Value::Primitive(*f),
         Ast::App { rator, params } => {
-            let resolved_rator = evaluate_help(rator, environment.clone())?;
+            let resolved_rator = eval_env(rator, environment.clone())?;
             match resolved_rator {
                 Value::Closure {
                     params: keys,
@@ -64,13 +64,13 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
                         });
                     }
                     let new_env = closure_environment
-                        .with(&mut keys.iter().zip(params.iter()), environment)?;
-                    evaluate_help(&body, new_env)?
+                        .with(keys.iter().map(String::as_str).zip(params), environment)?;
+                    eval_env(&body, new_env)?
                 }
                 Value::Primitive(f) => {
                     let mut args = Vec::new();
                     for param in params {
-                        args.push(evaluate_help(param, environment.clone())?);
+                        args.push(eval_env(param, environment.clone())?);
                     }
                     eval_primitive(f, &args)?
                 }
@@ -78,12 +78,12 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
             }
         }
         Ast::BinOp { rator, lhs, rhs } => {
-            let left_val = evaluate_help(lhs, environment.clone())?;
-            let right_val = evaluate_help(rhs, environment)?;
+            let left_val = eval_env(lhs, environment.clone())?;
+            let right_val = eval_env(rhs, environment)?;
             eval_binop(*rator, left_val, right_val)?
         }
         Ast::UnOp { rator, operand } => {
-            let arg = evaluate_help(operand, environment)?;
+            let arg = eval_env(operand, environment)?;
             match rator {
                 UnOp::Not => match arg {
                     Value::Bool(b) => Value::Bool(!b),
@@ -100,16 +100,16 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
             consequence,
             alternate,
         } => {
-            let test_val = evaluate_help(condition, environment.clone())?;
+            let test_val = eval_env(condition, environment.clone())?;
             match test_val {
-                Value::Bool(true) => evaluate_help(consequence, environment.clone())?,
-                Value::Bool(false) => evaluate_help(alternate, environment)?,
+                Value::Bool(true) => eval_env(consequence, environment)?,
+                Value::Bool(false) => eval_env(alternate, environment)?,
                 _ => return Err(EvalError::TestNonBool(test_val)),
             }
         }
-        Ast::Let { defs, body } => evaluate_help(
+        Ast::Let { defs, body } => eval_env(
             body,
-            environment.with_recursive(&mut defs.iter().map(|(k, b)| (k, b)))?,
+            environment.with_recursive(defs.iter().map(|(k, b)| (k.as_str(), b)))?,
         )?,
         Ast::Map { params, body } => Value::Closure {
             params: params.clone(),
@@ -124,7 +124,7 @@ pub fn evaluate_help(ast: &Ast, environment: Rc<dyn Environment>) -> EvalResult 
 
 /// Evaluate a primitive function call. `args` is the values of all the
 /// arguments to the function.
-fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
+fn eval_primitive<E: Environment>(f: PrimFun, args: &[Value<E>]) -> EvalResult<E> {
     let require_param_len = |n| {
         if args.len() == n {
             Ok(())
@@ -157,7 +157,7 @@ fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
         }
         PrimFun::IsEmpty => {
             require_param_len(1)?;
-            Value::Bool(args[0] == Value::List(LinkedList::new()))
+            Value::Bool(args[0] == Value::List(Vec::new()))
         }
         PrimFun::IsCons => {
             require_param_len(1)?;
@@ -170,9 +170,9 @@ fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
             require_param_len(2)?;
             match args[1].clone() {
                 Value::List(mut l) => {
-                    let mut new_list = LinkedList::new();
+                    let mut new_list = Vec::new();
                     new_list.append(&mut l);
-                    new_list.push_front(args[0].clone());
+                    new_list.push(args[0].clone());
                     Value::List(new_list)
                 }
                 a => return Err(EvalError::WrongPrimArg(f, a)),
@@ -182,7 +182,7 @@ fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
             require_param_len(1)?;
             match args[0].clone() {
                 Value::List(l) => l
-                    .front()
+                    .last()
                     .ok_or_else(|| EvalError::WrongPrimArg(f, args[0].clone()))?
                     .clone(),
                 a => return Err(EvalError::WrongPrimArg(f, a)),
@@ -196,7 +196,7 @@ fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
                         return Err(EvalError::WrongPrimArg(f, args[0].clone()));
                     }
 
-                    l.pop_front();
+                    l.pop();
                     Value::List(l)
                 }
                 a => return Err(EvalError::WrongPrimArg(f, a)),
@@ -213,7 +213,7 @@ fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
                     params,
                     environment: _,
                     body: _,
-                } => Value::Int(params.len() as i32),
+                } => Value::Int(params.len() as i64),
                 a => return Err(EvalError::WrongPrimArg(f, a)),
             }
         }
@@ -222,7 +222,7 @@ fn eval_primitive(f: PrimFun, args: &[Value]) -> EvalResult {
 
 /// Evaluate a binary operation `op`. Returns an error in case of a type error
 /// or a divide by zero.
-fn eval_binop(op: BinOp, lhs: Value, rhs: Value) -> EvalResult {
+fn eval_binop<E: Environment>(op: BinOp, lhs: Value<E>, rhs: Value<E>) -> EvalResult<E> {
     Ok(match op {
         BinOp::Plus => {
             let (a, b) = require_binop_int(lhs, rhs, op)?;
@@ -274,7 +274,11 @@ fn eval_binop(op: BinOp, lhs: Value, rhs: Value) -> EvalResult {
 
 /// Require that `lhs` and `rhs` be integers, or return an error if they are
 /// not. Return the contained integers on `Ok()`.
-fn require_binop_int(lhs: Value, rhs: Value, op: BinOp) -> Result<(i32, i32), EvalError> {
+fn require_binop_int<E: Environment>(
+    lhs: Value<E>,
+    rhs: Value<E>,
+    op: BinOp,
+) -> Result<(i64, i64), EvalError<E>> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok((a, b)),
         (val, Value::Int(_)) | (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
@@ -283,7 +287,11 @@ fn require_binop_int(lhs: Value, rhs: Value, op: BinOp) -> Result<(i32, i32), Ev
 
 /// Require that `lhs` and `rhs` be booleans, or return an error if they are
 /// not. Return the contained booleans on `Ok()`.
-fn require_binop_bool(lhs: Value, rhs: Value, op: BinOp) -> Result<(bool, bool), EvalError> {
+fn require_binop_bool<E: Environment>(
+    lhs: Value<E>,
+    rhs: Value<E>,
+    op: BinOp,
+) -> Result<(bool, bool), EvalError<E>> {
     match (lhs, rhs) {
         (Value::Bool(a), Value::Bool(b)) => Ok((a, b)),
         (val, Value::Bool(_)) | (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
@@ -294,16 +302,17 @@ fn require_binop_bool(lhs: Value, rhs: Value, op: BinOp) -> Result<(bool, bool),
 mod tests {
     use crate::{
         binding::{CallByName, CallByNeed, CallByValue},
+        lex::TokenStream,
         parse::parse,
-        token::TokenStream,
     };
+    use std::fmt::Debug;
 
     use super::*;
 
     /// Helper function for testing one evaluation. Will fail if the given
     /// string fails to parse, or the evaluated value does not match
     /// expectations.
-    fn test_eval_helper<E: 'static + BuildEnvironment>(s: &str, val: &EvalResult) {
+    fn test_eval_enver<E: Environment + Debug + BuildEnvironment>(s: &str, val: &EvalResult<E>) {
         assert_eq!(
             &evaluate::<E>(&parse(TokenStream::new(s.chars())).unwrap()),
             val
@@ -312,25 +321,25 @@ mod tests {
 
     #[test]
     fn test_evalute_int_constant() {
-        test_eval_helper::<CallByValue>("123", &Ok(Value::Int(123)));
-        test_eval_helper::<CallByName>("123", &Ok(Value::Int(123)));
-        test_eval_helper::<CallByNeed>("123", &Ok(Value::Int(123)));
+        test_eval_enver::<CallByValue>("123", &Ok(Value::Int(123)));
+        test_eval_enver::<CallByName>("123", &Ok(Value::Int(123)));
+        test_eval_enver::<CallByNeed>("123", &Ok(Value::Int(123)));
     }
 
     #[test]
     fn test_evaluate_let() {
         let s = "let a := 2; in a + a";
-        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(4)));
-        test_eval_helper::<CallByName>(s, &Ok(Value::Int(4)));
-        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(4)));
+        test_eval_enver::<CallByValue>(s, &Ok(Value::Int(4)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Int(4)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(4)));
     }
 
     #[test]
     fn test_def_map_in_let() {
         let s = "let inc := map x to x + 1; in inc(4)";
-        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(5)));
-        test_eval_helper::<CallByName>(s, &Ok(Value::Int(5)));
-        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(5)));
+        test_eval_enver::<CallByValue>(s, &Ok(Value::Int(5)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Int(5)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(5)));
     }
 
     #[test]
@@ -346,9 +355,9 @@ mod tests {
             in 
                 f(f(f(cons(cons(1, empty), empty))))
             "#;
-        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(1)));
-        test_eval_helper::<CallByName>(s, &Ok(Value::Int(1)));
-        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(1)));
+        test_eval_enver::<CallByValue>(s, &Ok(Value::Int(1)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Int(1)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(1)));
     }
 
     #[test]
@@ -369,8 +378,8 @@ mod tests {
             in 
                 (Y(fact))(6)
         "#;
-        test_eval_helper::<CallByName>(s, &Ok(Value::Int(720)));
-        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(720)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Int(720)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(720)));
     }
 
     #[test]
@@ -385,9 +394,9 @@ mod tests {
             in
                 fact(6)
         "#;
-        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(720)));
-        test_eval_helper::<CallByName>(s, &Ok(Value::Int(720)));
-        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(720)));
+        test_eval_enver::<CallByValue>(s, &Ok(Value::Int(720)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Int(720)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(720)));
     }
 
     #[test]
@@ -401,9 +410,9 @@ mod tests {
             in
                 fib(20)
         "#;
-        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(6765)));
-        test_eval_helper::<CallByName>(s, &Ok(Value::Int(6765)));
-        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(6765)));
+        test_eval_enver::<CallByValue>(s, &Ok(Value::Int(6765)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Int(6765)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(6765)));
     }
 
     #[test]
@@ -419,8 +428,8 @@ mod tests {
             in 
                 fib(10)
         "#;
-        test_eval_helper::<CallByValue>(s, &Ok(Value::Int(55)));
-        test_eval_helper::<CallByName>(s, &Ok(Value::Int(55)));
-        test_eval_helper::<CallByNeed>(s, &Ok(Value::Int(55)));
+        test_eval_enver::<CallByValue>(s, &Ok(Value::Int(55)));
+        test_eval_enver::<CallByName>(s, &Ok(Value::Int(55)));
+        test_eval_enver::<CallByNeed>(s, &Ok(Value::Int(55)));
     }
 }

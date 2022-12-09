@@ -4,12 +4,13 @@ use std::{iter::Peekable, rc::Rc};
 
 use crate::{
     ast::{Ast, BinOp, PrimFun, UnOp},
-    token::{KeyWord, LexError, Token, TokenResult, TokenStream},
+    lex::{self, KeyWord, Token, TokenResult, TokenStream},
 };
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum ParseError {
-    Lex(LexError),
+/// The set of errors which can occur while parsing.
+pub enum Error {
+    Lex(lex::Error),
     /// The parsing failed because there were leftover tokens at the end.
     SpareTokens,
     /// Reached EOF while parsing, and expected more tokens.
@@ -21,16 +22,17 @@ pub enum ParseError {
     },
 }
 
-impl From<LexError> for ParseError {
-    fn from(e: LexError) -> Self {
-        ParseError::Lex(e)
+impl From<lex::Error> for Error {
+    fn from(e: lex::Error) -> Self {
+        Error::Lex(e)
     }
 }
 
 /// An iterator which produces tokens.
 pub type TokenPeeker<I> = Peekable<TokenStream<I>>;
 
-pub type ParseResult = Result<Ast, ParseError>;
+#[allow(clippy::module_name_repetitions)]
+pub type ParseResult = Result<Ast, Error>;
 
 #[allow(unused)]
 /// Parse a stream of tokens, and generate an AST from it. Consumes the token
@@ -40,7 +42,7 @@ pub fn parse(tokens: TokenStream<impl Iterator<Item = char>>) -> ParseResult {
     let result = parse_exp(&mut peeker)?;
     let n = peeker.next();
     if n.is_some() {
-        return Err(ParseError::SpareTokens);
+        return Err(Error::SpareTokens);
     }
 
     Ok(result)
@@ -48,7 +50,7 @@ pub fn parse(tokens: TokenStream<impl Iterator<Item = char>>) -> ParseResult {
 
 /// Parse an expression. Consumes all tokens associated with the expression.
 fn parse_exp(tokens: &mut TokenPeeker<impl Iterator<Item = char>>) -> ParseResult {
-    let token = tokens.next().ok_or(ParseError::ReachedEnd)??;
+    let token = tokens.next().ok_or(Error::ReachedEnd)??;
     if let Token::KeyWord(kw) = token {
         match kw {
             KeyWord::If => return parse_if(tokens),
@@ -79,7 +81,7 @@ fn parse_exp(tokens: &mut TokenPeeker<impl Iterator<Item = char>>) -> ParseResul
             _ => break,
         };
         tokens.next(); // consume the peeked token
-        let last_token = tokens.next().ok_or(ParseError::ReachedEnd)??;
+        let last_token = tokens.next().ok_or(Error::ReachedEnd)??;
         exp = Ast::BinOp {
             rator: operator,
             lhs: Rc::new(exp),
@@ -137,11 +139,11 @@ fn parse_map(tokens: &mut TokenPeeker<impl Iterator<Item = char>>) -> ParseResul
     }
     loop {
         params.push(require_id(t)?);
-        match tokens.next().ok_or(ParseError::ReachedEnd)?? {
+        match tokens.next().ok_or(Error::ReachedEnd)?? {
             Token::Comma => t = tokens.next(),
             Token::KeyWord(KeyWord::To) => break,
             t => {
-                return Err(ParseError::UnexpectedToken {
+                return Err(Error::UnexpectedToken {
                     got: t,
                     expected: "identifier".into(),
                 })
@@ -163,14 +165,14 @@ fn parse_term(
 ) -> ParseResult {
     match last_token {
         Token::Tilde => {
-            let next_tok = tokens.next().ok_or(ParseError::ReachedEnd)??;
+            let next_tok = tokens.next().ok_or(Error::ReachedEnd)??;
             Ok(Ast::UnOp {
                 rator: UnOp::Not,
                 operand: Rc::new(parse_term(tokens, next_tok)?),
             })
         }
         Token::Minus => {
-            let next_tok = tokens.next().ok_or(ParseError::ReachedEnd)??;
+            let next_tok = tokens.next().ok_or(Error::ReachedEnd)??;
             Ok(Ast::UnOp {
                 rator: UnOp::Neg,
                 operand: Rc::new(parse_term(tokens, next_tok)?),
@@ -180,7 +182,7 @@ fn parse_term(
             KeyWord::Empty => Ok(Ast::Empty),
             KeyWord::True => Ok(Ast::Bool(true)),
             KeyWord::False => Ok(Ast::Bool(false)),
-            _ => Err(ParseError::UnexpectedToken {
+            _ => Err(Error::UnexpectedToken {
                 got: last_token,
                 expected: "constant".into(),
             }),
@@ -229,7 +231,7 @@ fn parse_factor(
             "arity" => Ast::Primitive(PrimFun::Arity),
             _ => Ast::Variable(s),
         }),
-        t => Err(ParseError::UnexpectedToken {
+        t => Err(Error::UnexpectedToken {
             got: t,
             expected: "`)` or identifer".into(),
         }),
@@ -240,7 +242,7 @@ fn parse_factor(
 /// following the list. Consumes the closing right parenthesis as well.
 fn parse_args<I: Iterator<Item = char>>(
     tokens: &mut TokenPeeker<I>,
-) -> Result<Vec<Rc<Ast>>, ParseError> {
+) -> Result<Vec<Rc<Ast>>, Error> {
     let mut args = Vec::new();
     if tokens.peek() == Some(&Ok(Token::RightParenthesis)) {
         tokens.next();
@@ -248,11 +250,11 @@ fn parse_args<I: Iterator<Item = char>>(
     }
     loop {
         args.push(Rc::new(parse_exp(tokens)?));
-        match tokens.next().ok_or(ParseError::ReachedEnd)?? {
+        match tokens.next().ok_or(Error::ReachedEnd)?? {
             Token::RightParenthesis => return Ok(args),
             Token::Comma => (),
             t => {
-                return Err(ParseError::UnexpectedToken {
+                return Err(Error::UnexpectedToken {
                     got: t,
                     expected: "`)` or `,`".into(),
                 })
@@ -262,11 +264,11 @@ fn parse_args<I: Iterator<Item = char>>(
 }
 
 /// Require that `token` be an identifier, and return the string it identifies,
-/// or a `ParseError` if not.
-fn require_id(token: Option<TokenResult>) -> Result<String, ParseError> {
-    match token.ok_or(ParseError::ReachedEnd)?? {
+/// or a `Error` if not.
+fn require_id(token: Option<TokenResult>) -> Result<String, Error> {
+    match token.ok_or(Error::ReachedEnd)?? {
         Token::Id(s) => Ok(s),
-        t => Err(ParseError::UnexpectedToken {
+        t => Err(Error::UnexpectedToken {
             got: t,
             expected: "identifier".into(),
         }),
@@ -275,12 +277,12 @@ fn require_id(token: Option<TokenResult>) -> Result<String, ParseError> {
 
 /// Require that the token be equal to the expected token. Returns an `Err` if
 /// this is not the case.
-fn require_token(token: Option<TokenResult>, required: &Token) -> Result<(), ParseError> {
-    let t = token.ok_or(ParseError::ReachedEnd)??;
+fn require_token(token: Option<TokenResult>, required: &Token) -> Result<(), Error> {
+    let t = token.ok_or(Error::ReachedEnd)??;
     if &t == required {
         Ok(())
     } else {
-        Err(ParseError::UnexpectedToken {
+        Err(Error::UnexpectedToken {
             got: t,
             expected: format!("{required}"),
         })
@@ -289,7 +291,7 @@ fn require_token(token: Option<TokenResult>, required: &Token) -> Result<(), Par
 
 #[cfg(test)]
 mod tests {
-    use crate::token::TokenStream;
+    use crate::lex::TokenStream;
 
     use super::*;
 

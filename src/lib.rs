@@ -1,9 +1,8 @@
 #![warn(clippy::pedantic)]
-#![allow(clippy::module_name_repetitions)]
 
 mod ast;
 mod binding;
 mod evaluate;
+mod lex;
 mod parse;
-mod token;
 mod value;

@@ -69,7 +69,7 @@ pub enum KeyWord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// The types of errors which can occur during the lexing process.
-pub enum LexError {
+pub enum Error {
     /// Unrecognized character.
     Unrecognized(char),
     /// Expected a certain character, but got a different one, or reached EOF.
@@ -77,7 +77,7 @@ pub enum LexError {
 }
 
 /// The result of asking for another token from the lexer.
-pub type TokenResult = Result<Token, LexError>;
+pub type TokenResult = Result<Token, Error>;
 
 /// A stream of tokens.
 pub struct TokenStream<I: Iterator<Item = char>> {
@@ -119,7 +119,7 @@ impl<I: Iterator<Item = char>> Iterator for TokenStream<I> {
             '!' => {
                 let c = self.source.next();
                 if c != Some('=') {
-                    return Some(Err(LexError::Unexpected {
+                    return Some(Err(Error::Unexpected {
                         expected: '=',
                         got: c,
                     }));
@@ -144,7 +144,7 @@ impl<I: Iterator<Item = char>> Iterator for TokenStream<I> {
             ':' => {
                 let c = self.source.next();
                 if c != Some('=') {
-                    return Some(Err(LexError::Unexpected {
+                    return Some(Err(Error::Unexpected {
                         expected: '=',
                         got: c,
                     }));
@@ -187,7 +187,7 @@ impl<I: Iterator<Item = char>> Iterator for TokenStream<I> {
                 Token::Number(s.parse().unwrap())
             }
             '\0' => return None,
-            c => return Some(Err(LexError::Unrecognized(c))),
+            c => return Some(Err(Error::Unrecognized(c))),
         }))
     }
 }
