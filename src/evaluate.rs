@@ -8,7 +8,7 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// The types of errors which can occur during a Jam interpretation.
-pub enum EvalError<E: Environment> {
+pub enum Error<E: Environment> {
     /// A variable was unbound and occurred free.
     Unbound(String),
     /// The program attempted to call something which was not a function.
@@ -30,7 +30,7 @@ pub enum EvalError<E: Environment> {
 }
 
 /// The result of an evaluation process.
-pub type EvalResult<E> = Result<Value<E>, EvalError<E>>;
+pub type EvalResult<E> = Result<Value<E>, Error<E>>;
 
 #[allow(unused)]
 /// Evaluate a Jam expression. Returns the resulting value on success, and an
@@ -58,7 +58,7 @@ pub fn eval_env<E: Environment>(ast: &Ast, environment: Rc<E>) -> EvalResult<E> 
                     body,
                 } => {
                     if params.len() != keys.len() {
-                        return Err(EvalError::WrongArgCount {
+                        return Err(Error::WrongArgCount {
                             expected: keys.len(),
                             actual: params.len(),
                         });
@@ -74,7 +74,7 @@ pub fn eval_env<E: Environment>(ast: &Ast, environment: Rc<E>) -> EvalResult<E> 
                     }
                     eval_primitive(f, &args)?
                 }
-                _ => return Err(EvalError::NotAFunction(resolved_rator)),
+                _ => return Err(Error::NotAFunction(resolved_rator)),
             }
         }
         Ast::BinOp { rator, lhs, rhs } => {
@@ -87,11 +87,11 @@ pub fn eval_env<E: Environment>(ast: &Ast, environment: Rc<E>) -> EvalResult<E> 
             match rator {
                 UnOp::Not => match arg {
                     Value::Bool(b) => Value::Bool(!b),
-                    _ => return Err(EvalError::WrongUnOpArg(*rator, arg)),
+                    _ => return Err(Error::WrongUnOpArg(*rator, arg)),
                 },
                 UnOp::Neg => match arg {
                     Value::Int(x) => Value::Int(-x),
-                    _ => return Err(EvalError::WrongUnOpArg(*rator, arg)),
+                    _ => return Err(Error::WrongUnOpArg(*rator, arg)),
                 },
             }
         }
@@ -104,7 +104,7 @@ pub fn eval_env<E: Environment>(ast: &Ast, environment: Rc<E>) -> EvalResult<E> 
             match test_val {
                 Value::Bool(true) => eval_env(consequence, environment)?,
                 Value::Bool(false) => eval_env(alternate, environment)?,
-                _ => return Err(EvalError::TestNonBool(test_val)),
+                _ => return Err(Error::TestNonBool(test_val)),
             }
         }
         Ast::Let { defs, body } => eval_env(
@@ -129,7 +129,7 @@ fn eval_primitive<E: Environment>(f: PrimFun, args: &[Value<E>]) -> EvalResult<E
         if args.len() == n {
             Ok(())
         } else {
-            Err(EvalError::WrongArgCount {
+            Err(Error::WrongArgCount {
                 expected: n,
                 actual: args.len(),
             })
@@ -175,7 +175,7 @@ fn eval_primitive<E: Environment>(f: PrimFun, args: &[Value<E>]) -> EvalResult<E
                     new_list.push(args[0].clone());
                     Value::List(new_list)
                 }
-                a => return Err(EvalError::WrongPrimArg(f, a)),
+                a => return Err(Error::WrongPrimArg(f, a)),
             }
         }
         PrimFun::First => {
@@ -183,9 +183,9 @@ fn eval_primitive<E: Environment>(f: PrimFun, args: &[Value<E>]) -> EvalResult<E
             match args[0].clone() {
                 Value::List(l) => l
                     .last()
-                    .ok_or_else(|| EvalError::WrongPrimArg(f, args[0].clone()))?
+                    .ok_or_else(|| Error::WrongPrimArg(f, args[0].clone()))?
                     .clone(),
-                a => return Err(EvalError::WrongPrimArg(f, a)),
+                a => return Err(Error::WrongPrimArg(f, a)),
             }
         }
         PrimFun::Rest => {
@@ -193,13 +193,13 @@ fn eval_primitive<E: Environment>(f: PrimFun, args: &[Value<E>]) -> EvalResult<E
             match args[0].clone() {
                 Value::List(mut l) => {
                     if l.is_empty() {
-                        return Err(EvalError::WrongPrimArg(f, args[0].clone()));
+                        return Err(Error::WrongPrimArg(f, args[0].clone()));
                     }
 
                     l.pop();
                     Value::List(l)
                 }
-                a => return Err(EvalError::WrongPrimArg(f, a)),
+                a => return Err(Error::WrongPrimArg(f, a)),
             }
         }
         PrimFun::Arity => {
@@ -214,7 +214,7 @@ fn eval_primitive<E: Environment>(f: PrimFun, args: &[Value<E>]) -> EvalResult<E
                     environment: _,
                     body: _,
                 } => Value::Int(params.len() as i64),
-                a => return Err(EvalError::WrongPrimArg(f, a)),
+                a => return Err(Error::WrongPrimArg(f, a)),
             }
         }
     })
@@ -235,7 +235,7 @@ fn eval_binop<E: Environment>(op: BinOp, lhs: Value<E>, rhs: Value<E>) -> EvalRe
         BinOp::Div => {
             let (a, b) = require_binop_int(lhs, rhs, op)?;
             if b == 0 {
-                return Err(EvalError::DivZero);
+                return Err(Error::DivZero);
             }
             Value::Int(a / b)
         }
@@ -278,10 +278,10 @@ fn require_binop_int<E: Environment>(
     lhs: Value<E>,
     rhs: Value<E>,
     op: BinOp,
-) -> Result<(i64, i64), EvalError<E>> {
+) -> Result<(i64, i64), Error<E>> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok((a, b)),
-        (val, Value::Int(_)) | (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
+        (val, Value::Int(_)) | (_, val) => Err(Error::WrongBinOpArg(op, val)),
     }
 }
 
@@ -291,10 +291,10 @@ fn require_binop_bool<E: Environment>(
     lhs: Value<E>,
     rhs: Value<E>,
     op: BinOp,
-) -> Result<(bool, bool), EvalError<E>> {
+) -> Result<(bool, bool), Error<E>> {
     match (lhs, rhs) {
         (Value::Bool(a), Value::Bool(b)) => Ok((a, b)),
-        (val, Value::Bool(_)) | (_, val) => Err(EvalError::WrongBinOpArg(op, val)),
+        (val, Value::Bool(_)) | (_, val) => Err(Error::WrongBinOpArg(op, val)),
     }
 }
 

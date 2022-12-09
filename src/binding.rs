@@ -11,7 +11,7 @@ use std::{
 
 use crate::{
     ast::Ast,
-    evaluate::{eval_env, EvalError, EvalResult},
+    evaluate::{self, eval_env, EvalResult},
     value::{demote_in, strengthen, EitherValue, Value},
 };
 
@@ -30,19 +30,19 @@ pub trait Environment: Sized + Eq {
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
         context: Rc<Self>,
-    ) -> Result<Rc<Self>, EvalError<Self>>;
+    ) -> Result<Rc<Self>, evaluate::Error<Self>>;
 
     /// Create a new environment, supporting recursive evaluation of each
     /// binding.
     fn with_recursive<'a>(
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
-    ) -> Result<Rc<Self>, EvalError<Self>>;
+    ) -> Result<Rc<Self>, evaluate::Error<Self>>;
 
     /// Get the key from an environment. Returns an unbound error if it is
     /// unable to get the key. Although the pointer to `self` is mutable, the
     /// environment may not remove any bindings - this is for call-by-need.
-    fn get(&self, key: &str) -> Result<Value<Self>, EvalError<Self>>;
+    fn get(&self, key: &str) -> Result<Value<Self>, evaluate::Error<Self>>;
 
     fn eq(&self, other: &Self) -> bool
     where
@@ -111,11 +111,11 @@ impl Environment for CallByValue {
             .storage
             .get(key)
             // no key found
-            .ok_or_else(|| EvalError::Unbound(key.into()))?
+            .ok_or_else(|| evaluate::Error::Unbound(key.into()))?
             .borrow()
             .as_ref()
             // key found, but not evaluated
-            .ok_or_else(|| EvalError::ForwardReference(key.into()))?
+            .ok_or_else(|| evaluate::Error::ForwardReference(key.into()))?
             .as_ref()
             .into())
     }
@@ -124,7 +124,7 @@ impl Environment for CallByValue {
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
         context: Rc<Self>,
-    ) -> Result<Rc<Self>, EvalError<Self>> {
+    ) -> Result<Rc<Self>, evaluate::Error<Self>> {
         let mut new_storage = self.clone_storage();
         for (key, body) in bindings {
             let value = eval_env(body, context.clone())?;
@@ -142,7 +142,7 @@ impl Environment for CallByValue {
     fn with_recursive<'a>(
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
-    ) -> Result<Rc<Self>, EvalError<Self>> {
+    ) -> Result<Rc<Self>, evaluate::Error<Self>> {
         let mut new_storage = self.clone_storage();
         let collected_bindings: Vec<(&str, &Rc<Ast>)> = bindings.collect();
         for (key, _) in &collected_bindings {
@@ -223,13 +223,13 @@ impl Environment for CallByName {
             .storage
             .get(key)
             // unable to find match for this key
-            .ok_or_else(|| EvalError::Unbound(key.into()))?;
+            .ok_or_else(|| evaluate::Error::Unbound(key.into()))?;
 
         let cell_ref = (*cell).borrow();
 
         let (opt_env, body) = cell_ref
             .as_ref()
-            .ok_or_else(|| EvalError::ForwardReference(key.into()))?;
+            .ok_or_else(|| evaluate::Error::ForwardReference(key.into()))?;
 
         let env = match opt_env {
             Some(e) => e.clone(),
@@ -247,7 +247,7 @@ impl Environment for CallByName {
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
         context: Rc<Self>,
-    ) -> Result<Rc<Self>, EvalError<Self>> {
+    ) -> Result<Rc<Self>, evaluate::Error<Self>> {
         let mut new_storage = self.clone_storage();
         for (key, body) in bindings {
             new_storage.insert(
@@ -261,7 +261,7 @@ impl Environment for CallByName {
     fn with_recursive<'a>(
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
-    ) -> Result<Rc<Self>, EvalError<Self>> {
+    ) -> Result<Rc<Self>, evaluate::Error<Self>> {
         // collect so we can iterate twice
         let mut new_storage = self.clone_storage();
         let collected_bindings: Vec<(&str, &Rc<Ast>)> = bindings.collect();
@@ -344,7 +344,7 @@ impl Environment for CallByNeed {
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
         context: Rc<Self>,
-    ) -> Result<Rc<Self>, EvalError<Self>> {
+    ) -> Result<Rc<Self>, evaluate::Error<Self>> {
         let mut new_storage = self.clone_storage();
         for (key, body) in bindings {
             new_storage.insert(
@@ -358,7 +358,7 @@ impl Environment for CallByNeed {
     fn with_recursive<'a>(
         &self,
         bindings: impl Iterator<Item = (&'a str, &'a Rc<Ast>)>,
-    ) -> Result<Rc<Self>, EvalError<Self>> {
+    ) -> Result<Rc<Self>, evaluate::Error<Self>> {
         // collect so we can iterate twice
         let mut new_storage = self.clone_storage();
         let collected_bindings: Vec<(&'a str, &Rc<Ast>)> = bindings.collect();
@@ -381,7 +381,7 @@ impl Environment for CallByNeed {
             .storage
             .get(key)
             // unable to find match for this key
-            .ok_or_else(|| EvalError::Unbound(key.into()))?;
+            .ok_or_else(|| evaluate::Error::Unbound(key.into()))?;
 
         let value = match &*cell.borrow() {
             Some(NeedValue::Ast(env, ast)) => eval_env(
@@ -390,7 +390,7 @@ impl Environment for CallByNeed {
                     .unwrap_or_else(|| self.self_rc.upgrade().unwrap()),
             )?,
             Some(NeedValue::Value(val)) => return Ok(val.clone()),
-            None => return Err(EvalError::ForwardReference(key.into())),
+            None => return Err(evaluate::Error::ForwardReference(key.into())),
         };
         cell.replace(Some(NeedValue::Value(value.clone())));
 
